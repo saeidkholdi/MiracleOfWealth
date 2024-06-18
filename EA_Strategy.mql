@@ -1,0 +1,3215 @@
+﻿//+------------------------------------------------------------------+
+//|                                                    StP2P3v41.mq4 |
+//|                                                      SaeidKholdi |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "SaeidKholdi"
+#property link      "https://www.mql5.com"
+#property version   "41.00"
+#property strict
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+
+bool isOn=1;
+int timeType=0;                        //       0:Current      1:D1-H1       2:H4-M30       3:H1-M15      4:M30-M5      5:M15-M1
+bool EnableTimer=true;
+int TimerMinuteForLoopD1=60;
+int TimerMinuteForLoopH4=30;
+int TimerMinuteForLoopH1=15;
+int TimerMinuteForLoopM30=5;
+int TimerMinuteForLoopM15=2;
+int startSymbolFrom=0;              // Always 0
+bool CheckUndownloadedChart=true;
+bool AlertSignal=true;
+bool ZZCombineEnabled=0;
+bool justSmall123=true;
+bool checkRedPointInNormal123=false;  
+bool ExistInvertTrendBefore=true;
+int DrawTextCnt=97; 
+const int empty=-1;
+string lstSymbol[];
+ForTrade lstForTrade[10000];
+int lstForTradeCount=0;
+string lstTextFile[20000];
+int lstTextFileCnt=0;
+const int maxDepth= // Make some effort
+int lstDayZZ[]= {x,x,x,x,x,x};  // More effort   
+int MaxWaveCountForBreakRedPoint=6; 
+ZZCombine lstDayCombineZZ[];
+int CombineZZCount=2;
+string SelectedSymbol;
+const double SLMultiple=1;
+const double TpPercent=60; 
+const double VolumeSize=0.5;
+const bool CheckRedpointBeforeOrder=false;
+double correctionPercentMinimumD1=XX; // Tell me your advice
+double correctionPercentMinimum=XX; // Thank you...
+bool ShowAllWaves=0;
+bool st123D1=true;
+bool st123Aggressive=0;  // Always false or 1% of ballance
+bool stHammer=true;
+bool stMA200=true;
+bool stP2=0;
+bool stInside=true;
+bool st123IchiTenKij=true;
+bool order=0;
+enum ENUM_ST_TYPE
+  {
+   ST_NONE, ST_123, ST_AGGRESSIVE, ST_HAMMER, ST_MA200, ST_INSIDE, ST_P2, ST_123IchiTenKij
+  };
+
+enum TrendType
+  {
+   TT_none, TT_eslah50, TT_eslah30, TT_inside, TT_p2
+  };
+
+struct ForTrade
+  {
+   double            Price;
+   datetime          Date;
+   double            RedPointPrice;
+   string            hash ;
+   string            symbol;
+   int               result;
+   datetime          TradeDate;
+   double            SL;
+   double            TP;
+   ENUM_ST_TYPE      St_Type;
+  };
+
+struct ZZCombine
+  {
+   int               zz1;
+   int               zz2;
+  };
+
+struct ZZList
+  {
+   int               list[];
+   int               zz[2];
+   bool              invalid;
+   int               lstBiggerList[];
+  };
+
+int timeFrames[9] = { PERIOD_M1,PERIOD_M5,PERIOD_M15,PERIOD_M30,PERIOD_H1,PERIOD_H4,PERIOD_D1,PERIOD_W1,PERIOD_MN1 };
+
+
+int OnInit()
+  {
+   int TimerMinuteForLoop=0;
+   switch(timeType)
+     {
+      case 0:
+         TimerMinuteForLoop=GetCurrentTimerMinuteForLoop();
+         break;
+      case 1:
+         TimerMinuteForLoop=TimerMinuteForLoopD1;
+         break;
+      case 2:
+         TimerMinuteForLoop=TimerMinuteForLoopH4;
+         break;
+      case 3:
+         TimerMinuteForLoop=TimerMinuteForLoopH1;
+         break;
+      case 4:
+         TimerMinuteForLoop=TimerMinuteForLoopM30;
+         break;
+      case 5:
+         TimerMinuteForLoop=TimerMinuteForLoopM15;
+         break;
+         break;
+      default:
+         TimerMinuteForLoop= 0;
+         break;
+     }
+   EventSetTimer(TimerMinuteForLoop*60);
+
+   if(IsTesting()==false)
+      MyInit();
+
+   return(INIT_SUCCEEDED);
+  }
+
+void OnTick()
+  {
+   if(IsTesting()==true)
+      MyInit();
+//TestHammer();
+
+void OnTimer()
+  {
+
+   if(IsTesting()==false && EnableTimer)
+      MyInit();
+
+  }
+
+struct  ProcessResult
+  {
+   int               result;
+   int               pivotCount;
+   int               lstZZ[];
+   int               zzDayDepth;
+   int               shift;
+   TrendType         trendType;
+  };
+
+struct RedPointResult
+  {
+   double            Price;
+   bool              IsAggressive;
+   bool              NotFound;
+   datetime          Date;
+   double            SL;
+   double            TP;
+  };
+
+struct result123
+  {
+   int               val;
+   int               waveCount;
+   int               shift;
+   TrendType         trendType;
+  };
+
+void MyInit()
+  {
+   if(!isOn  && !IsTesting())
+      return;
+
+   PreparelstDayCombineZZ();
+
+   if(IsTesting()==false)
+      PrintAndComment("StP2P3 Started...");
+
+
+   if(IsTesting()==false)
+      SelectedSymbol= "";
+   else
+      SelectedSymbol= _Symbol;
+
+
+   if(SelectedSymbol =="")
+     {
+      FindSymbols(lstSymbol);
+      int listCount=ArraySize(lstSymbol);
+      if(startSymbolFrom>=listCount)
+         startSymbolFrom=0;
+
+      // Check Undownloaded chart :
+      long mainChartID = ChartID();
+      int cnt=0;
+      if(CheckUndownloadedChart==true && IsTesting()==false)
+        {
+         long lstNewChartID[10000];
+         PrepareListL(lstNewChartID);
+         int ii=0;
+
+         for(int i=startSymbolFrom; i<listCount; i++)
+           {
+            datetime test = iTime(lstSymbol[i], PERIOD__D1(), 1);
+            if(TimeYear(test) ==1970)
+              {
+               PrintAndComment("Symbol "+ (i+1) + " of " + listCount + " is downloading data ("+lstSymbol[i]+")");
+
+               cnt++;
+
+               long chartID = ChartOpen(lstSymbol[i], PERIOD__D1());
+               lstNewChartID[ii]=chartID;
+               ii++;
+               DrawText(chartID, "* Data Loaded. *",lstSymbol[i],PERIOD__D1(), clrGreen, 0,55,false);
+               Sleep(500);
+               ChartNavigate(chartID, CHART_BEGIN,-1);
+
+               if(cnt>=20)
+                 {
+                  Sleep(10000);
+                  CloseAllCharts(lstNewChartID);
+                  cnt=0;
+                 }
+              }
+           }
+         Sleep(10000);
+         CloseAllCharts(lstNewChartID);
+        }
+      for(int i=startSymbolFrom; i<listCount; i++)
+        {
+         PrintAndComment("Symbol "+ (i+1) + " of " + listCount + " is in progress ("+lstSymbol[i]+")");
+
+         datetime test = iTime(lstSymbol[i], PERIOD__D1(), 20);
+         if(TimeYear(test) ==1970)
+           {
+            PrintAndAlertAndComment("Symbol "+(i+1) + " of " + listCount + " not Found ("+lstSymbol[i]+")");
+            continue;
+           }
+
+         Start(lstSymbol[i]);
+        }
+      string fname=WriteFile();
+      PrintAndComment("Text File Created: " + fname);
+      PrintAndComment("StP2P3 is Shutting Down... ("+ArraySize(lstSymbol)+" symbols)");
+     }
+   else
+     {
+
+      if(IsTesting()==false)
+         PrintAndComment("Symbol 1 is in progress ("+SelectedSymbol + ")");
+
+      Start(SelectedSymbol);
+
+      if(IsTesting()==false)
+        {
+         PrintAndComment("StP2P3 is Shutting Down... ("+SelectedSymbol+")");
+        }
+
+     }
+
+  }
+
+void Start(string symbol)
+  {
+//Alert(PERIOD__D1()+"     "+PERIOD__H1());
+   int lstEmpty[];
+   int  HammerResult=0;
+   RedPointResult redOut;
+   int max=200;
+   ProcessResult dayResult[];
+   ArrayResize(dayResult, max);
+   Process123(symbol,PERIOD__D1(),lstEmpty,redOut,dayResult);
+   for(int i=0; i<max; i++)
+     {
+      if(ArraySize(dayResult[i].lstZZ)>1)
+        {
+
+         if(dayResult[i].result==1)
+           {
+            ProcessResult hourResult[];
+            ArrayResize(hourResult, max);
+
+            if(stHammer && dayResult[i].trendType== TT_eslah50)
+              {
+               if(dayResult[i].result>0 && dayResult[i].shift== 0 &&  ArraySize(dayResult[i].lstZZ)>=2 &&  IsHammer(symbol,PERIOD__D1(),dayResult[i].lstZZ[0],dayResult[i].lstZZ[1])==1)
+                  Trade(ST_HAMMER, dayResult[i],hourResult[0],redOut,symbol);
+              }
+            if(stMA200)
+              {
+               if(dayResult[i].trendType!=TT_p2 && dayResult[i].result>0 &&   ArraySize(dayResult[i].lstZZ)>=2 && IsMA200(symbol,PERIOD__D1(),dayResult[i].lstZZ,true)==1)
+                  Trade(ST_MA200, dayResult[i],hourResult[0],redOut,symbol);
+              }
+
+            if(st123IchiTenKij)
+              {
+               if(dayResult[i].trendType!=TT_p2 && dayResult[i].result>0 &&  Is123IchiTenKij(symbol,PERIOD__D1(),true)==1)
+                  Trade(ST_123IchiTenKij, dayResult[i],hourResult[0],redOut,symbol);
+              }
+
+            if(dayResult[i].trendType== TT_eslah30 || dayResult[i].trendType== TT_eslah50)
+              {
+               Process123(symbol,PERIOD__H1(), dayResult[i].lstZZ,redOut,hourResult,dayResult[i].zzDayDepth,true, dayResult[i].shift);
+
+               //Print(" DayResult="+dayResult[i].result + " HourResult="+hourResult[i].result );
+               for(int j=0; j<max; j++)
+                 {
+                  if(hourResult[j].result>0)
+                    {
+                     if(hourResult[j].result==1)
+                        Trade(ST_123,  dayResult[i],hourResult[j],redOut,symbol);
+                     if(hourResult[j].result==2)
+                        Trade(ST_AGGRESSIVE,  dayResult[i],hourResult[j],redOut,symbol);
+                    }
+                 }
+              }
+
+            if(dayResult[i].trendType== TT_inside)
+              {
+               Trade(ST_INSIDE,  dayResult[i],hourResult[0],redOut,symbol);
+              }
+
+            if(dayResult[i].trendType== TT_p2)
+              {
+               Trade(ST_P2,  dayResult[i],hourResult[0],redOut,symbol);
+              }
+
+           }
+
+         if(dayResult[i].result==-1)
+           {
+            ProcessResult hourResult[];
+            ArrayResize(hourResult, max);
+
+            if(stHammer && dayResult[i].trendType== TT_eslah50)
+              {
+               if(dayResult[i].result<0 && dayResult[i].shift== 0 &&  ArraySize(dayResult[i].lstZZ)>=2 &&  IsHammer(symbol,PERIOD__D1(),dayResult[i].lstZZ[0],dayResult[i].lstZZ[1])==-1)
+                  Trade(ST_HAMMER, dayResult[i],hourResult[0],redOut,symbol);
+              }
+            if(stMA200)
+              {
+               if(dayResult[i].trendType!=TT_p2 && dayResult[i].result<0 &&  dayResult[i].shift== 0 && ArraySize(dayResult[i].lstZZ)>=2 && IsMA200(symbol,PERIOD__D1(),dayResult[i].lstZZ,false)==-1)
+                  Trade(ST_MA200, dayResult[i],hourResult[0],redOut,symbol);
+              }
+
+            if(st123IchiTenKij)
+              {
+               if(dayResult[i].trendType!=TT_p2 && dayResult[i].result>0 &&  Is123IchiTenKij(symbol,PERIOD__D1(),true)==-1)
+                  Trade(ST_123IchiTenKij, dayResult[i],hourResult[0],redOut,symbol);
+              }
+
+            if(dayResult[i].trendType== TT_eslah30 || dayResult[i].trendType== TT_eslah50)
+              {
+               Process123(symbol,PERIOD__H1(), dayResult[i].lstZZ,redOut,hourResult,dayResult[i].zzDayDepth,false, dayResult[i].shift);
+
+               //Print(" DayResult="+dayResult[i].result + " HourResult="+hourResult[i].result );
+               for(int j=0; j<max; j++)
+                 {
+                  if(hourResult[j].result<0)
+                    {
+                     if(hourResult[j].result==-1)
+                        Trade(ST_123,  dayResult[i],hourResult[j],redOut,symbol);
+                     if(hourResult[j].result==-2)
+                        Trade(ST_AGGRESSIVE,  dayResult[i],hourResult[j],redOut,symbol);
+                    }
+                 }
+              }
+
+            if(dayResult[i].trendType== TT_inside)
+              {
+               Trade(ST_INSIDE,  dayResult[i],hourResult[0],redOut,symbol);
+              }
+
+            if(dayResult[i].trendType== TT_p2)
+              {
+               Trade(ST_P2,  dayResult[i],hourResult[0],redOut,symbol);
+              }
+
+           }
+        }
+
+     }
+
+  }
+
+void ExportZZ(int & lstZZ[],string symbol,  ENUM_TIMEFRAMES timeframe, int zzDepth, int maxDep,int a=0, int b=0)
+  {
+   int cnt=0;
+   ArrayResize(lstZZ,maxDep);
+   PrepareList(lstZZ);
+   if(a==0 && b==0)
+     {
+      a=zzDepth/2;
+      b=zzDepth/2;
+     }
+
+#ifdef __MQL4__
+   for(int i=0; i<maxDep; i++)
+     {
+
+      double zz;
+
+      zz= iCustom(symbol, timeframe,"ZigZag",zzDepth,a,b,0,i);
+
+      if(zz!=0)
+        {
+         AddToList(lstZZ, i);
+         cnt++;
+         if(cnt>20)
+            break;
+        }
+     }
+#endif
+
+#ifdef __MQL5__
+   double lstTemp[];
+   ArrayResize(lstTemp,maxDep);
+   int ZZ_handle=iCustom(Symbol(),timeframe,"Examples\\ZigZag",zzDepth,a,b);
+   CopyBuffer(ZZ_handle,0,0,maxDep,lstTemp);
+   ArraySetAsSeries(lstTemp,true);
+   for(int i=0; i<maxDep; i++)
+     {
+      if(i>=ArraySize(lstTemp))
+         break;
+      if(lstTemp[i]!=0)
+        {
+         AddToList(lstZZ, i);
+         cnt++;
+         if(cnt>20)
+            break;
+        }
+     }
+#endif
+  }
+
+void Process123(string symbol,  ENUM_TIMEFRAMES timeframe, int & dayZZ[], RedPointResult & redOut, ProcessResult & finalResult[],  int zzDayDepth =NULL, bool IsDailyAsc =NULL, int dailyShift=0)
+  {
+   int finalResultCnt=0;
+   int finalResultCnt2=0;
+   int lstZZdepth[];
+
+   if(timeframe==PERIOD__D1())
+      ArrayCopy(lstZZdepth,lstDayZZ);
+
+   if(timeframe==PERIOD__H1())
+     {
+      int lstNewZZDepth[];
+      FindSmallerZZFromList(lstDayZZ,  lstNewZZDepth, zzDayDepth);
+      ArrayCopy(lstZZdepth,lstNewZZDepth);
+     }
+
+   int zzCnt=0;
+   ZZList zz[];
+   ArrayResize(zz,maxDepth);
+
+   for(int y=0; y<500; y++)
+     {
+      ArrayResize(zz[y].list, maxDepth);
+      PrepareList(zz[y].list);
+     }
+
+
+   for(int j=0; j< ArraySize(lstZZdepth) ; j++)
+     {
+      if(lstZZdepth[j]==-1)
+         break;
+
+      int lstZZ[];
+      ExportZZ(lstZZ, symbol,   timeframe,  lstZZdepth[j],  maxDepth);
+      ArrayResize(zz[j].list,ArraySize(lstZZ));
+      for(int x=0; x<ArraySize(lstZZ); x++)
+         zz[j].list[x]=lstZZ[x];
+      zz[j].zz[0]=lstZZdepth[j];
+      zz[j].zz[1]=0;
+      zzCnt=j+1;
+     }
+
+   if(ZZCombineEnabled && timeframe==PERIOD__D1())
+     {
+      ZZList lstCombineResult[1000];
+      for(int y=0; y<1000; y++)
+        {
+         ArrayResize(lstCombineResult[y].list, maxDepth);
+         PrepareList(lstCombineResult[y].list);
+        }
+
+      for(int ii=0; ii<CombineZZCount-1; ii++)
+        {
+         int lstBiggerList[];
+         New(zz, lstDayCombineZZ[ii].zz1, lstDayCombineZZ[ii].zz2, lstCombineResult,timeframe,symbol,lstBiggerList);
+
+         for(int i=0; i<ArraySize(lstCombineResult); i++)
+           {
+            if(lstCombineResult[i].list[0]==-1)
+               break;
+
+            for(int m=0; m<ArraySize(lstCombineResult[i].list); m++)
+              {
+               zz[zzCnt].list[m]=lstCombineResult[i].list[m];
+              }
+            zz[zzCnt].zz[0]=lstCombineResult[i].zz[0];
+            zz[zzCnt].zz[1]=lstCombineResult[i].zz[1];
+            ArrayCopy(zz[zzCnt].lstBiggerList,lstBiggerList);
+            zzCnt++;
+           }
+        }
+      for(int x1=0; x1<zzCnt; x1++)
+        {
+         if(zz[x1].invalid==true)
+            continue;
+         for(int x2=0; x2<zzCnt; x2++)
+           {
+            if
+            (
+               SerializeList(zz[x1].list) == SerializeList(zz[x2].list)
+               &&
+               zz[x1].invalid== false
+               &&
+               zz[x2].invalid== false
+               &&
+               x1!=x2
+            )
+              {
+               zz[x2].invalid=true;
+              }
+           }
+        }
+     }
+
+   for(int j=0; j<zzCnt ; j++)
+     {
+      if(zz[j].invalid== true)
+         continue
+      int dayZZ0=0;
+      int dayZZ1=0;
+      if(ArraySize(dayZZ)>1)
+        {
+         dayZZ0=dayZZ[0+dailyShift];
+         dayZZ1=dayZZ[1+dailyShift];
+        }
+
+      if(IsDailyAsc==NULL || IsDailyAsc==true)
+        {
+         result123 result;
+         if(timeframe==PERIOD__D1())
+            result= Is23MethodAscD1(symbol,zz[j].list,zz[j].zz, zz[j].lstBiggerList);
+         if(timeframe==PERIOD__H1())
+            result=Is23MethodAscH1(symbol,zz[j].list, redOut,zz[j].zz,zz[j].lstBiggerList,dayZZ0,dayZZ1);
+
+         if(result.val>0)
+           {
+            /* if(stHammer==true && timeframe== PERIOD__D1())
+               {
+                //chek kardane candle -1 baraye hammer :
+               }
+               */
+            finalResult[finalResultCnt].result=result.val;
+            finalResult[finalResultCnt].pivotCount=3 + (result.waveCount*2);
+            finalResult[finalResultCnt].zzDayDepth=zz[j].zz[0]; //GetMaxZZ(zz[j].zz[0],zz[j].zz[1]);
+            finalResult[finalResultCnt].shift=result.shift;
+            finalResult[finalResultCnt].trendType=result.trendType;
+            ArrayCopy(finalResult[finalResultCnt].lstZZ,zz[j].list);
+            finalResultCnt++;
+           }
+        }
+
+      if(IsDailyAsc==NULL || IsDailyAsc==false)
+        {
+         result123 result;
+         if(timeframe==PERIOD__D1())
+            result= Is23MethodDescD1(symbol,zz[j].list,zz[j].zz, zz[j].lstBiggerList);
+         if(timeframe==PERIOD__H1())
+            result=Is23MethodDescH1(symbol,zz[j].list, redOut,zz[j].zz,zz[j].lstBiggerList,dayZZ0,dayZZ1);
+
+         if(result.val<0)
+           {
+            finalResult[finalResultCnt].result=result.val;
+            finalResult[finalResultCnt].pivotCount=3 + (result.waveCount*2);
+            finalResult[finalResultCnt].zzDayDepth=zz[j].zz[0]; //GetMaxZZ(zz[j].zz[0],zz[j].zz[1]);
+            finalResult[finalResultCnt].shift=result.shift;
+            finalResult[finalResultCnt].trendType=result.trendType;
+            ArrayCopy(finalResult[finalResultCnt].lstZZ,zz[j].list);
+            finalResultCnt++;
+           }
+        }
+
+     }
+   for(int j=0; j<zzCnt ; j++)
+     {
+      if(zz[j].invalid== true)
+         continue;
+
+      //Print(zz[j].zz[0] + "     "+ SerializeList(zz[j].list,10) + "     "+zzCnt);
+
+      int dayZZ0=0;
+      int dayZZ1=0;
+      if(ArraySize(dayZZ)>1)
+        {
+         dayZZ0=dayZZ[0+dailyShift];
+         dayZZ1=dayZZ[1+dailyShift];
+        }
+
+      if(IsDailyAsc==NULL || IsDailyAsc==true)
+        {
+         result123 result;
+         if(timeframe==PERIOD__D1())
+            result= IsP2MethodAscD1(symbol,zz[j].list,zz[j].zz, zz[j].lstBiggerList);
+
+         if(result.val>0)
+           {
+            finalResult[finalResultCnt].result=result.val;
+            finalResult[finalResultCnt].pivotCount=3 + (result.waveCount*2);
+            finalResult[finalResultCnt].zzDayDepth=zz[j].zz[0]; //GetMaxZZ(zz[j].zz[0],zz[j].zz[1]);
+            finalResult[finalResultCnt].shift=result.shift;
+            finalResult[finalResultCnt].trendType=result.trendType;
+            ArrayCopy(finalResult[finalResultCnt].lstZZ,zz[j].list);
+            finalResultCnt++;
+           }
+        }
+
+      if(IsDailyAsc==NULL || IsDailyAsc==false)
+        {
+         result123 result;
+         if(timeframe==PERIOD__D1())
+            result= IsP2MethodDescD1(symbol,zz[j].list,zz[j].zz, zz[j].lstBiggerList);
+
+         if(result.val<0)
+           {
+            finalResult[finalResultCnt].result=result.val;
+            finalResult[finalResultCnt].pivotCount=3 + (result.waveCount*2);
+            finalResult[finalResultCnt].zzDayDepth=zz[j].zz[0]; //GetMaxZZ(zz[j].zz[0],zz[j].zz[1]);
+            finalResult[finalResultCnt].shift=result.shift;
+            finalResult[finalResultCnt].trendType=result.trendType;
+            ArrayCopy(finalResult[finalResultCnt].lstZZ,zz[j].list);
+            finalResultCnt++;
+           }
+        }
+
+     }
+
+
+  }
+
+int GetPointOfLastCandle(string symbol,int newPoint,int & list[],int downOrUp,double & lstPriceForCompare[])
+  {
+   int selectedIndex=newPoint;
+
+   for(int i=newPoint; i<newPoint+10; i++)
+     {
+      if(downOrUp==1)
+        {
+         if(
+            GetMaxPrice(symbol,1,list[i]) > GetMaxPrice(symbol,1,list[selectedIndex])
+            //&&
+            //IsBiggerThanList( GetMaxPrice(symbol,1,i) ,lstPriceForCompare )
+         )
+            selectedIndex = i;
+        }
+
+      if(downOrUp==0)
+        {
+         if(
+            GetMinPrice(symbol,1,list[i]) < GetMinPrice(symbol,1,list[selectedIndex])
+            //&&
+            //IsLowerThanList( GetMinPrice(symbol,1,i) ,lstPriceForCompare )
+         )
+            selectedIndex = i;
+        }
+     }
+   return -1;
+  }
+
+double GetMinPrice(string symbol, ENUM_TIMEFRAMES timeframe, int shift)
+  {
+   if(iClose(symbol,timeframe,shift) < iOpen(symbol,timeframe,shift))
+      return iClose(symbol,timeframe,shift);
+
+   return iOpen(symbol,timeframe,shift);
+  }
+
+double GetMaxPrice(string symbol,ENUM_TIMEFRAMES timeframe, int shift)
+  {
+   if(iClose(symbol,timeframe,shift) > iOpen(symbol,timeframe,shift))
+      return iClose(symbol,timeframe,shift);
+
+   return iOpen(symbol,timeframe,shift);
+  }
+bool IsLowerThanList(double minPrice,double & lstMinPriceForCompare[])
+  {
+   int i=0;
+   while(lstMinPriceForCompare[i]!=empty)
+     {
+      if(lstMinPriceForCompare[i] < minPrice)
+        {
+         return false;
+        }
+      i++;
+     }
+
+   return true;
+  }
+bool IsBiggerThanList(double maxPrice, double & lstMaxPriceForCompare[])
+  {
+   int i=0;
+   while(lstMaxPriceForCompare[i]!=empty)
+     {
+      if(lstMaxPriceForCompare[i] > maxPrice)
+        {
+         return false;
+        }
+      i++;
+     }
+
+   return true;
+  }
+
+void CorrectZigZag(string symbol,int newPoint, int & lstZZ[], int & lstFinalPoint[], double & lstFinalPrice[],  int downOrUp, double & lstDownPrice[],double & lstUpPrice[], bool firstTime)
+  {
+   if(firstTime==false)
+     {
+      if(downOrUp==1)
+        {
+         newPoint = GetPointOfLastCandle(symbol,newPoint,lstZZ,downOrUp,lstUpPrice);
+        }
+      else
+        {
+         newPoint = GetPointOfLastCandle(symbol,newPoint,lstZZ,downOrUp,lstDownPrice);
+        }
+     }
+   else
+     {
+      firstTime=false;
+     }
+
+
+   if(newPoint != empty)
+     {
+      AddToList(lstFinalPoint, lstZZ[newPoint]);
+      if(downOrUp==1)
+        {
+         double price=GetMaxPrice(symbol,1,lstZZ[newPoint]);
+         AddToListD(lstFinalPrice, price);
+         AddToListD(lstUpPrice, price);
+         downOrUp=1;
+        }
+      else
+         if(downOrUp==0)
+           {
+            double price=GetMinPrice(symbol,1,lstZZ[newPoint]);
+            AddToListD(lstFinalPrice, price);
+            AddToListD(lstDownPrice, price);
+            downOrUp=0;
+           }
+      CorrectZigZag(symbol,lstZZ[newPoint], lstZZ,lstFinalPoint, lstFinalPrice, downOrUp,lstDownPrice,lstUpPrice,false);
+     }
+  }
+void AddToList(int & list[],int item)
+  {
+   for(int i=0; i<ArraySize(list); i++)
+     {
+      if(list[i]==empty)
+        {
+         list[i]=item;
+         return;
+        }
+     }
+  }
+void AddToListD(double & list[],double item)
+  {
+   for(int i=0; i<ArraySize(list); i++)
+     {
+      if(list[i]==empty)
+        {
+         list[i]=item;
+         return;
+        }
+     }
+  }
+void PrepareList(int & list[])
+  {
+   for(int i=0; i<ArraySize(list); i++)
+     {
+      list[i]=empty;
+     }
+  }
+void PrepareListD(double & list[])
+  {
+   for(int i=0; i<ArraySize(list); i++)
+     {
+      list[i]=empty;
+     }
+  }
+void PrepareListL(long & list[])
+  {
+   for(int i=0; i<ArraySize(list); i++)
+     {
+      list[i]=empty;
+     }
+  }
+
+result123 Is23MethodAscD1(string symbol,int & lstZZ[], int & zzDep[],int & lstBiggerList[])
+  {
+   ENUM_TIMEFRAMES timeframe=PERIOD__D1();
+   bool eslah;
+   result123 result;
+   result.val=0;
+   result.waveCount=0;
+   result.shift=0;
+   result.trendType=TT_none;
+
+   double insideMinPrice,insideMaxPrice  ;
+   int insideFirstShift,insideLastShift;
+
+   if(stInside==true)
+      for(int c=0; c<=1; c++)
+        {
+         bool blnExistInsideBefore = ExistInsideBefore(symbol, timeframe,  0,insideMinPrice,insideMaxPrice,insideFirstShift,insideLastShift);
+         if(blnExistInsideBefore)
+           {
+            int lstNew[];
+            GetListBeforeShift(lstZZ, lstNew,insideLastShift);
+
+            int lstNew0=lstNew[0];
+            if(c==1)  
+               lstNew0=0;
+            if
+            (
+               (
+                  iHigh(symbol, timeframe,0)> insideMaxPrice
+                  ||
+                  iHigh(symbol, timeframe,1)> insideMaxPrice
+               )
+               &&
+               iLow(symbol,timeframe, lstNew0) < iHigh(symbol,timeframe, insideLastShift)
+               &&
+               iLow(symbol,timeframe, lstNew0) < iHigh(symbol,timeframe, lstNew[1+c])
+               &&
+               iHigh(symbol,timeframe, lstNew[1+c]) < iHigh(symbol,timeframe, insideLastShift)
+            )
+              {
+               result.val= 1;
+               result.trendType=TT_inside;
+               //result.waveCount=1;
+               //result.shift=1;
+               return result;
+              }
+           }
+        }
+   if(st123D1==true)
+     {
+      bool isMovement=false;
+      int loop=0;
+      loop=1;
+      for(int i=0; i<=loop; i++)
+        {
+         int j=0;
+         bool wave123IsValid=true;
+         int cntWave=0;
+         TrendType trendType=TT_none;
+
+         while(wave123IsValid)
+           {
+            bool bln50,bln30 ;
+            if(justSmall123=true)
+               wave123IsValid=false;
+
+            for(int k=0; k<=2; k+=2)
+              {
+               bln50=EslaheDarsad(correctionPercentMinimum,  iHigh(symbol,timeframe,lstZZ[1+i+j+k]), iLow(symbol,timeframe,lstZZ[2+i+j+k]), iLow(symbol,timeframe,lstZZ[0+i+j+k]), iHigh(symbol,timeframe,lstZZ[1+i+j+k]),timeframe);
+               bln30=EslaheDarsad(correctionPercentMinimumD1, iHigh(symbol,timeframe,lstZZ[1+i+j+k]), iLow(symbol,timeframe,lstZZ[2+i+j+k]), iLow(symbol,timeframe,lstZZ[0+i+j+k]), iHigh(symbol,timeframe,lstZZ[1+i+j+k]),timeframe);
+
+               if(k==0)
+                 {
+                  isMovement=true;
+                  if(bln50)
+                     trendType= TT_eslah50;
+                  else
+                     if(bln30)
+                        trendType= TT_eslah30;
+
+                 }
+
+               if(bln30 ||  bln50)
+                 {
+                  eslah=true;
+                 }
+               else
+                 {
+                  eslah=false;
+                  break;
+                 }
+
+              }
+            if(eslah && (bln30 ||  bln50))
+              {
+               if(
+                  GetMinPrice(symbol,timeframe,lstZZ[0+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[2+i+j])
+                  &&
+                  GetMinPrice(symbol,timeframe,lstZZ[2+i+j]) > iLow(symbol,timeframe,lstZZ[4+i+j])
+                  &&
+                  GetMaxPrice(symbol,timeframe,lstZZ[1+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[3+i+j]) //inja
+                  //&&
+                  //iClose(symbol,timeframe,lstZZ[0+i+j]) > iLow(symbol,timeframe,lstZZ[4+i+j])  // lazem
+                  &&
+                  GetMinPrice(symbol,timeframe,lstZZ[0+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[1+i+j])
+                  &&
+                  GetMaxPrice(symbol,timeframe,lstZZ[1+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[2+i+j])
+                  &&
+                  GetMinPrice(symbol,timeframe,lstZZ[2+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[3+i+j])
+                  &&
+                  GetMaxPrice(symbol,timeframe,lstZZ[3+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[4+i+j])
+                  &&
+                  ExistBiggerThan(lstZZ[1+i+j], lstZZ[3+i+j],  symbol,timeframe)==false
+                  &&
+                  ExistSmallerThan(lstZZ[0+i+j], lstZZ[2+i+j],  symbol,timeframe)==false
+                  &&
+                  ExistSmallerThan(lstZZ[2+i+j], lstZZ[4+i+j],  symbol,timeframe)==false
+               )
+                 {
+                  cntWave++;
+                  j=j+2;
+
+                  if((GetMinPrice(symbol,timeframe,lstZZ[2+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[4+i+j]))==false)  // مقایسه سایه پیوت یک با بدنه سه
+                     break;
+                 }
+               else
+                 {
+                  wave123IsValid=false;
+                 }
+              }
+            else
+              {
+               wave123IsValid=false;
+              }
+           }
+
+         if(cntWave>0)
+           {
+            //PrintAndComment(SerializeList(zzDep));
+            for(int ii=cntWave; j>0; ii--)
+              {
+               j=(ii-1)*2;
+
+               if
+               (
+                  (
+                     ExistInvertTrendBefore==false
+                     &&
+                     (
+                        (
+                           ArraySize(lstZZ)>5+i+j
+                           &&
+                           GetMinPrice(symbol,timeframe,lstZZ[4+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[5+i+j])
+                           &&
+                           zzDep[0]>=12
+                           &&
+                           zzDep[1]==0
+                        )
+                        ||
+                        (
+                           ArraySize(lstZZ)>5+i+j
+                           &&
+                           GetMinPrice(symbol,timeframe,lstZZ[4+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[5+i+j])
+                           &&
+                           zzDep[0]>=12
+                           &&
+                           zzDep[1]>0
+                           &&
+                           ExistTwoItemOfBiggerList(lstZZ,4+i+j, lstBiggerList)
+                        )
+                        ||
+                        (
+                           ArraySize(lstZZ)>5+i+j
+                           &&
+                           GetMinPrice(symbol,timeframe,lstZZ[4+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[5+i+j])
+                           &&
+                           iHigh(symbol,timeframe,lstZZ[3+i+j]) < iHigh(symbol,timeframe,lstZZ[5+i+j])
+                           &&
+                           zzDep[0]<=12
+                        )
+                     )
+                  )
+                  ||
+                  (
+                     ExistInvertTrendBefore==true
+                     &&
+                     (
+                        GetMinPrice(symbol,timeframe,lstZZ[4+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[5+i+j])
+                        &&
+                        GetMinPrice(symbol,timeframe,lstZZ[4+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[6+i+j])
+                        &&
+                        GetMinPrice(symbol,timeframe,lstZZ[4+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[7+i+j])
+                        &&
+                        GetMinPrice(symbol,timeframe,lstZZ[4+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[8+i+j])
+                     )
+                  )
+
+               )
+                 {
+                  //ObjectCreate(ChartID(),IntegerToString(MathRand()),OBJ_ARROW_THUMB_UP,0,TimeCurrent(),iLow(symbol,PERIOD__D1(),0));
+                  result.val= 1;
+                  result.waveCount=ii;
+                  result.shift=i;
+                  result.trendType=trendType;
+                  return result;
+                 }
+              }
+           }
+
+        }
+     }
+
+   return result;
+
+  }
+result123 IsP2MethodDescD1(string symbol,int & lstZZ[], int & zzDep[],int & lstBiggerList[])
+  {
+   ENUM_TIMEFRAMES timeframe=PERIOD__D1();
+
+   bool eslah;
+
+
+   result123 result;
+   result.val=0;
+   result.waveCount=0;
+   result.trendType=TT_none;
+   result.shift=0;
+
+
+   if(stP2==true)
+     {
+      // Signal gereftan az p2
+      double p2Redpoint=0;
+      int outShift=0;
+      if
+      (
+         FindTrendBeforeMovement(symbol, timeframe, lstZZ, false,p2Redpoint,zzDep[0],outShift)==true
+         &&
+         Bars(symbol,PERIOD__D1(),iTime(symbol,PERIOD__D1(),lstZZ[3]),iTime(symbol,PERIOD__D1(),0))<=70
+      )
+        {
+         double price=iLow(symbol,timeframe,0);
+         if(price<=p2Redpoint && price>=p2Redpoint-p2Redpoint*5/100)
+           {
+            //Print(outShift);
+            result.val= -1;
+            result.trendType=TT_p2;
+            //result.waveCount=1;
+            result.shift=outShift;
+            return result;
+           }
+        }
+
+
+     }
+
+   return result;
+  }
+result123 IsP2MethodAscD1(string symbol,int & lstZZ[], int & zzDep[],int & lstBiggerList[])
+  {
+   ENUM_TIMEFRAMES timeframe=PERIOD__D1();
+
+   bool eslah;
+
+
+   result123 result;
+   result.val=0;
+   result.waveCount=0;
+   result.trendType=TT_none;
+   result.shift=0;
+
+
+   if(stP2==true)
+     {
+      // Signal gereftan az p2
+      double p2Redpoint=0;
+      int outShift=0;
+      if
+      (
+         FindTrendBeforeMovement(symbol, timeframe, lstZZ, true,p2Redpoint,zzDep[0],outShift)==true
+         &&
+         Bars(symbol,PERIOD__D1(),iTime(symbol,PERIOD__D1(),lstZZ[3]),iTime(symbol,PERIOD__D1(),0))<=70
+      )
+        {
+         double price=iHigh(symbol, timeframe,0);
+         if(price>=p2Redpoint && price<=p2Redpoint+p2Redpoint*5/100)
+           {
+            //Print(outShift);
+            result.val= 1;
+            result.trendType=TT_p2;
+            //result.waveCount=1;
+            result.shift=outShift;
+            return result;
+           }
+        }
+     }
+   return result;
+  }
+
+result123 Is23MethodDescD1(string symbol,int & lstZZ[], int & zzDep[],int & lstBiggerList[])
+  {
+   ENUM_TIMEFRAMES timeframe=PERIOD__D1();
+
+   bool eslah;
+
+
+   result123 result;
+   result.val=0;
+   result.waveCount=0;
+   result.trendType=TT_none;
+   result.shift=0;
+
+   double insideMinPrice,insideMaxPrice  ;
+   int insideFirstShift,insideLastShift;
+
+
+   if(stInside==true)
+      for(int c=0; c<=1; c++)
+        {
+         bool blnExistInsideBefore = ExistInsideBefore(symbol, timeframe,  0,insideMinPrice,insideMaxPrice,insideFirstShift,insideLastShift);
+         if(blnExistInsideBefore)
+           {
+
+            int lstNew[];
+            GetListBeforeShift(lstZZ, lstNew,insideLastShift);
+
+            int lstNew0=lstNew[0];
+            if(c==1)  // Baraye etminane bishtar
+               lstNew0=0;
+
+            if
+            (
+               (
+                  iLow(symbol, timeframe,0)< insideMinPrice
+                  ||
+                  iLow(symbol, timeframe,1)< insideMinPrice
+               )
+               &&
+               iHigh(symbol,timeframe, lstNew0) > iLow(symbol,timeframe, insideLastShift)
+               &&
+               iHigh(symbol,timeframe, lstNew0) > iLow(symbol,timeframe, lstNew[1+c])
+               &&
+               iLow(symbol,timeframe, lstNew[1+c]) > iLow(symbol,timeframe, insideLastShift)
+            )
+              {
+               result.val= -1;
+               result.trendType=TT_inside;
+               return result;
+              }
+           }
+
+        }
+   if(st123D1==true)
+     {
+      int loop=0;
+      loop=1;
+      bool isMovement=false;
+      for(int i=0; i<=loop; i++)
+        {
+
+         int j=0;
+         int cntWave=0;
+         bool wave123IsValid=true;
+         TrendType trendType=TT_none;
+
+         while(wave123IsValid)
+           {
+            bool bln50,bln30 ;
+            if(justSmall123=true)
+               wave123IsValid=false;
+
+            for(int k=0; k<=2; k+=2)
+              {
+               bln50=EslaheDarsad(correctionPercentMinimum,  iLow(symbol,timeframe,lstZZ[1+i+j+k]), iHigh(symbol,timeframe,lstZZ[2+i+j+k]), iHigh(symbol,timeframe,lstZZ[0+i+j+k]), iLow(symbol,timeframe,lstZZ[1+i+j+k]),timeframe);
+               bln30=EslaheDarsad(correctionPercentMinimumD1, iLow(symbol,timeframe,lstZZ[1+i+j+k]), iHigh(symbol,timeframe,lstZZ[2+i+j+k]), iHigh(symbol,timeframe,lstZZ[0+i+j+k]), iLow(symbol,timeframe,lstZZ[1+i+j+k]),timeframe);
+
+               if(k==0)
+                 {
+                  isMovement=true;
+                  if(bln50)
+                     trendType= TT_eslah50;
+                  else
+                     if(bln30)
+                        trendType= TT_eslah30;
+
+                 }
+
+               if(bln30 ||  bln50)
+                 {
+                  eslah=true;
+                 }
+               else
+                 {
+                  eslah=false;
+                  break;
+                 }
+              }
+
+            if(eslah && (bln30 ||  bln50))
+              {
+               if(
+                  GetMaxPrice(symbol,timeframe,lstZZ[0+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[2+i+j])
+                  &&
+                  GetMaxPrice(symbol,timeframe,lstZZ[2+i+j]) < iHigh(symbol,timeframe,lstZZ[4+i+j])
+                  &&
+                  GetMinPrice(symbol,timeframe,lstZZ[1+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[3+i+j]) //inja
+                  //&&
+                  //iClose(symbol,timeframe,lstZZ[0+i+j]) > iLow(symbol,timeframe,lstZZ[4+i+j])  // lazem
+                  &&
+                  GetMaxPrice(symbol,timeframe,lstZZ[0+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[1+i+j])
+                  &&
+                  GetMinPrice(symbol,timeframe,lstZZ[1+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[2+i+j])
+                  &&
+                  GetMaxPrice(symbol,timeframe,lstZZ[2+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[3+i+j])
+                  &&
+                  GetMinPrice(symbol,timeframe,lstZZ[3+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[4+i+j])
+                  &&
+                  ExistSmallerThan(lstZZ[1+i+j], lstZZ[3+i+j],  symbol,timeframe)==false
+                  &&
+                  ExistBiggerThan(lstZZ[0+i+j], lstZZ[2+i+j],  symbol,timeframe)==false
+                  &&
+                  ExistBiggerThan(lstZZ[2+i+j], lstZZ[4+i+j],  symbol,timeframe)==false
+               )
+                 {
+                  cntWave++;
+                  j=j+2;
+
+                  if((GetMaxPrice(symbol,timeframe,lstZZ[2+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[4+i+j]))==false)  // مقایسه سایه پیوت یک با بدنه سه
+                     break;
+                 }
+               else
+                 {
+                  wave123IsValid=false;
+                 }
+              }
+            else
+              {
+               wave123IsValid=false;
+              }
+
+           }
+
+         if(cntWave>0)
+           {
+            for(int ii=cntWave; j>0; ii--)
+              {
+               j=(ii-1)*2;
+
+               if
+               (
+                  (
+                     ExistInvertTrendBefore==false
+                     &&
+                     (
+                        (
+                           (
+                              //  ArraySize(lstZZ)>5+i+j
+                              //   &&
+                              GetMaxPrice(symbol,timeframe,lstZZ[4+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[5+i+j])
+                              &&
+                              zzDep[0]>=12
+                              &&
+                              zzDep[1]==0
+                           )
+                           ||
+                           (
+                              //    ArraySize(lstZZ)>5+i+j
+                              //    &&
+                              GetMaxPrice(symbol,timeframe,lstZZ[4+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[5+i+j])
+                              &&
+                              zzDep[0]>=12
+                              &&
+                              zzDep[1]>0
+                              &&
+                              ExistTwoItemOfBiggerList(lstZZ,4+i+j, lstBiggerList)
+                           )
+                           ||
+                           (
+                              //   ArraySize(lstZZ)>5+i+j
+                              //  &&
+                              GetMaxPrice(symbol,timeframe,lstZZ[4+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[5+i+j])
+                              &&
+                              iLow(symbol,timeframe,lstZZ[3+i+j]) > iLow(symbol,timeframe,lstZZ[5+i+j])
+                              &&
+                              zzDep[0]<=12
+                           )
+                        )
+
+                     )
+                  )
+                  ||
+                  (
+                     ExistInvertTrendBefore==true
+                     &&
+                     (
+                        GetMaxPrice(symbol,timeframe,lstZZ[4+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[5+i+j])
+                        &&
+                        GetMaxPrice(symbol,timeframe,lstZZ[4+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[6+i+j])
+                        &&
+                        GetMaxPrice(symbol,timeframe,lstZZ[4+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[7+i+j])
+                        &&
+                        GetMaxPrice(symbol,timeframe,lstZZ[4+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[8+i+j])
+
+                     )
+                  )
+
+               )
+                 {
+                  result.val= -1;
+                  result.waveCount=ii;
+                  result.shift=i;
+                  result.trendType=trendType;
+                  return result;
+                 }
+              }
+           }
+
+
+        }
+     }
+
+   return result;
+
+  }
+result123 Is23MethodAscH1(string symbol,int & lstZZ[],  RedPointResult & redOut, int & zzDep[],int & lstBiggerList[], int dayZZ0 =NULL,int dayZZ1=NULL)
+  {
+   ENUM_TIMEFRAMES timeframe=  PERIOD__H1();
+
+   bool Eslah50;
+
+   result123 result;
+   result.val=0;
+   result.waveCount=0;
+   result.trendType=TT_none;
+
+   int loop=0;
+   loop=1;
+   for(int i=0; i<=loop; i++)
+     {
+
+      int cntWave=0;
+      int j=0;
+      bool wave123IsValid=true;
+      while(wave123IsValid)
+        {
+
+         if
+         (
+            iTime(symbol,timeframe, lstZZ[3+i+j]) >=  iTime(symbol,PERIOD__D1(), dayZZ0)     // dar asl 4 bayad bashe , ama erfagh kardam gozashtam 3
+            &&
+            EslaheDarsad(correctionPercentMinimum, iHigh(symbol,timeframe,lstZZ[1+i+j]), iLow(symbol,timeframe,lstZZ[2+i+j]), iLow(symbol,timeframe,lstZZ[0+i+j]), iHigh(symbol,timeframe,lstZZ[1+i+j]),timeframe)
+            &&
+            EslaheDarsad(correctionPercentMinimum, iHigh(symbol,timeframe,lstZZ[3+i+j]), iLow(symbol,timeframe,lstZZ[4+i+j]), iLow(symbol,timeframe,lstZZ[2+i+j]), iHigh(symbol,timeframe,lstZZ[3+i+j]),timeframe)
+         )
+           {
+            Eslah50=true;
+           }
+         else
+           {
+            Eslah50=false;
+           }
+         if
+         (
+            Eslah50
+            &&
+            GetMinPrice(symbol,timeframe,lstZZ[0+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[2+i+j])
+            &&
+            GetMinPrice(symbol,timeframe,lstZZ[2+i+j]) > iLow(symbol,timeframe,lstZZ[4+i+j])
+            &&
+            GetMaxPrice(symbol,timeframe,lstZZ[1+i+j]) > GetMaxPrice(symbol,timeframe,lstZZ[3+i+j]) //inja
+            //&&
+            //iClose(symbol,timeframe,lstZZ[0+i+j]) > iLow(symbol,timeframe,lstZZ[4+i+j])  // lazem
+            &&
+            GetMinPrice(symbol,timeframe,lstZZ[0+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[1+i+j])
+            &&
+            GetMaxPrice(symbol,timeframe,lstZZ[1+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[2+i+j])
+            &&
+            GetMinPrice(symbol,timeframe,lstZZ[2+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[3+i+j])
+            &&
+            GetMaxPrice(symbol,timeframe,lstZZ[3+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[4+i+j])
+            &&
+            ExistBiggerThan(lstZZ[1+i+j], lstZZ[3+i+j],  symbol,timeframe)==false
+            &&
+            ExistSmallerThan(lstZZ[0+i+j], lstZZ[2+i+j],  symbol,timeframe)==false
+            &&
+            ExistSmallerThan(lstZZ[2+i+j], lstZZ[4+i+j],  symbol,timeframe)==false
+         )
+           {
+            cntWave++;
+            j=j+2;
+            break;
+           }
+         else
+           {
+            wave123IsValid=false;
+           }
+
+        }
+      redOut= FindRedPointPrice(symbol,  timeframe, lstZZ,dayZZ0,dayZZ1,true,zzDep,false);
+      if(cntWave>0)
+        {
+         if
+         (
+            (
+               checkRedPointInNormal123==true
+               &&
+               redOut.Price >= GetMaxPrice(symbol,timeframe,0)
+               &&
+               redOut.Price !=0
+               &&
+               redOut.NotFound==false
+               &&
+               Bars(symbol,PERIOD__D1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__D1(),0))<=30     // 15 rooz
+               //&&
+               //Bars(symbol,PERIOD__H1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__H1(),0))<=130
+               //&&
+               //iTime(symbol,timeframe,lstZZ[5+i+j])>iTime(symbol,PERIOD__D1(),dayZZ0)
+               //&&
+               //waveCount<4
+            )
+            ||
+            checkRedPointInNormal123==false
+
+         )
+           {
+            result.val= 1;
+            result.waveCount=cntWave;
+            result.shift=i;
+            //Print(redOut.Price + "  "+redOut.Date+ "      " + redOut.NotFound +"   eslah="+Eslah50+ " " + timeframe + "   "+lstZZ[0]);
+            return result;;
+           }
+
+        }
+      else  // Aggressive :
+        {
+         if
+         (
+            st123Aggressive==true
+            &&
+            redOut.Price <= GetMaxPrice(symbol,timeframe,0)
+            &&
+            redOut.Price !=0
+            &&
+            redOut.NotFound==false
+            &&
+            Bars(symbol,PERIOD__D1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__D1(),0))<=30     // 15 rooz
+            //&&
+            //Bars(symbol,PERIOD__H1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__H1(),0))<=130
+         )
+           {
+            result.val= 2;
+            result.waveCount=0;
+            result.shift=i;
+            //Print(redOut.Price + "  "+redOut.Date+ "      " + redOut.NotFound +"   eslah="+Eslah50+ " " + timeframe + "   "+lstZZ[0]);
+            return result;;
+           }
+        }
+
+     }
+
+
+   return result;
+
+  }
+result123 Is23MethodDescH1(string symbol,int & lstZZ[],  RedPointResult & redOut, int & zzDep[],int & lstBiggerList[], int dayZZ0 =NULL,int dayZZ1=NULL)
+  {
+   ENUM_TIMEFRAMES timeframe=  PERIOD__H1();
+
+   bool Eslah50;
+   result123 result;
+   result.val=0;
+   result.waveCount=0;
+   result.trendType=TT_none;
+   int loop=0;
+   loop=1;
+   for(int i=0; i<=loop; i++)
+     {
+
+      int cntWave=0;
+      int j=0;
+      bool wave123IsValid=true;
+      while(wave123IsValid)
+        {
+         if
+         (
+            iTime(symbol,timeframe, lstZZ[3+i+j]) >=  iTime(symbol,PERIOD__D1(), dayZZ0)     // dar asl 4 bayad bashe , ama erfagh kardam gozashtam 3
+            &&
+            EslaheDarsad(correctionPercentMinimum, iLow(symbol,timeframe,lstZZ[1+i+j]), iHigh(symbol,timeframe,lstZZ[2+i+j]), iHigh(symbol,timeframe,lstZZ[0+i+j]), iLow(symbol,timeframe,lstZZ[1+i+j]),timeframe)
+            &&
+            EslaheDarsad(correctionPercentMinimum, iLow(symbol,timeframe,lstZZ[3+i+j]), iHigh(symbol,timeframe,lstZZ[4+i+j]), iHigh(symbol,timeframe,lstZZ[2+i+j]), iLow(symbol,timeframe,lstZZ[3+i+j]),timeframe)
+         )
+           {
+            Eslah50=true;
+
+           }
+         else
+           {
+            Eslah50=false;
+           }
+
+         if
+         (
+            Eslah50
+            &&
+            GetMaxPrice(symbol,timeframe,lstZZ[0+i+j]) < GetMinPrice(symbol,timeframe,lstZZ[2+i+j])
+            &&
+            GetMaxPrice(symbol,timeframe,lstZZ[2+i+j]) < iLow(symbol,timeframe,lstZZ[4+i+j])
+            &&
+            GetMinPrice(symbol,timeframe,lstZZ[1+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[3+i+j]) //inja
+            //&&
+            //iClose(symbol,timeframe,lstZZ[0+i+j]) > iLow(symbol,timeframe,lstZZ[4+i+j])  // lazem
+            &&
+            GetMaxPrice(symbol,timeframe,lstZZ[0+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[1+i+j])
+            &&
+            GetMinPrice(symbol,timeframe,lstZZ[1+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[2+i+j])
+            &&
+            GetMaxPrice(symbol,timeframe,lstZZ[2+i+j]) > GetMinPrice(symbol,timeframe,lstZZ[3+i+j])
+            &&
+            GetMinPrice(symbol,timeframe,lstZZ[3+i+j]) < GetMaxPrice(symbol,timeframe,lstZZ[4+i+j])
+            &&
+            ExistSmallerThan(lstZZ[1+i+j], lstZZ[3+i+j],  symbol,timeframe)==false
+            &&
+            ExistBiggerThan(lstZZ[0+i+j], lstZZ[2+i+j],  symbol,timeframe)==false
+            &&
+            ExistBiggerThan(lstZZ[2+i+j], lstZZ[4+i+j],  symbol,timeframe)==false
+         )
+           {
+            cntWave++;
+            j=j+2;
+            break;
+           }
+         else
+           {
+            wave123IsValid=false;
+           }
+
+        }
+
+      redOut= FindRedPointPrice(symbol,  timeframe, lstZZ,dayZZ0,dayZZ1,false,zzDep,false);
+      if(cntWave>0)
+        {
+         // Print("red=" +redOut.Price + "  "+redOut.Date+ "      " + redOut.NotFound +"   eslah="+Eslah50+ " " + timeframe + "   "+lstZZ[0]+ "    Bars="+ Bars(symbol,PERIOD__D1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__D1(),0)) + "    BarsH1="+Bars(symbol,PERIOD__H1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__H1(),0)) );
+         // Print("red=" + redOut.Price + "       "+ GetMaxPrice(symbol,timeframe,0) );
+         if
+         (
+            (
+               checkRedPointInNormal123==true
+               &&
+               redOut.Price <= GetMinPrice(symbol,timeframe,0)
+               &&
+               redOut.Price !=0
+               &&
+               redOut.NotFound==false
+               &&
+               Bars(symbol,PERIOD__D1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__D1(),0))<=30     // 15 rooz
+            )
+            ||
+            checkRedPointInNormal123==false
+
+         )
+           {
+            result.val= -1;
+            result.waveCount=cntWave;
+            result.shift=i;
+            //Print(redOut.Price + "  "+redOut.Date+ "      " + redOut.NotFound +"   eslah="+Eslah50+ " " + timeframe + "   "+lstZZ[0]);
+            return result;
+           }
+        }
+      else  // Aggressive :
+        {
+         if
+         (
+            st123Aggressive==true
+            &&
+            redOut.Price >= GetMinPrice(symbol,timeframe,0)
+            &&
+            redOut.Price !=0
+            &&
+            redOut.NotFound==false
+            &&
+            Bars(symbol,PERIOD__D1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__D1(),0))<=30     // 15 rooz
+            //&&
+            //Bars(symbol,PERIOD__H1(),iTime(symbol,PERIOD__D1(),dayZZ0),iTime(symbol,PERIOD__H1(),0))<=130
+         )
+           {
+            result.val= -2;
+            result.waveCount=0;
+            result.shift=i;
+            //Print(redOut.Price + "  "+redOut.Date+ "      " + redOut.NotFound +"   eslah="+Eslah50+ " " + timeframe + "   "+lstZZ[0]);
+            return result;
+           }
+
+        }
+     }
+   return result;
+
+  }
+
+RedPointResult FindRedPointPrice(string symbol, ENUM_TIMEFRAMES timeframe,int & lstH1ZZ[],int dayZigzag0, int dayZigzag1,  bool Asc, int & zzDep[], bool Aggressive)
+  {
+   RedPointResult result;
+   result.Price=0;
+   result.NotFound=false;
+   result.IsAggressive=Aggressive;
+
+   datetime dayZigzag0Time = iTime(symbol,PERIOD__D1(),dayZigzag0);
+
+   /*  MqlDateTime time;
+     TimeToStruct(dayZigzag0Time,time);
+     time.hour=0;
+     time.min=0;
+     time.sec=0;
+     dayZigzag0Time = StructToTime(time);*/
+   datetime dayZigzag0TimeExact=dayZigzag0Time;
+
+   double dayPrice=NULL;
+   int lstZZ[];
+
+   int zzd=zzDep[0];
+   if(zzDep[1]!=0)
+     {
+      if(zzDep[0]>=24)
+         zzd=12;
+      else
+         zzd=zzDep[1];
+     }
+
+   ExportZZ(lstZZ, symbol,   timeframe,  zzd,  maxDepth);
+
+
+   int i=0;
+   while(iTime(symbol,timeframe,i)>=dayZigzag0Time)
+     {
+      if
+      (
+         (
+            TimeYear(dayZigzag0Time)== TimeYear(iTime(symbol,timeframe, i))
+            &&
+            TimeMonth(dayZigzag0Time)== TimeMonth(iTime(symbol,timeframe,i))
+            &&
+            TimeDay(dayZigzag0Time)== TimeDay(iTime(symbol,timeframe,i))
+         )
+         &&
+         (
+            timeframe== PERIOD_H1  // for d1h1
+            ||
+            (
+               timeframe==PERIOD_M15  // for h1m15
+               &&
+               TimeHour(dayZigzag0Time)== TimeHour(iTime(symbol,timeframe,i))
+            )
+         )
+      )
+        {
+         if(dayPrice==NULL)
+           {
+            dayZigzag0TimeExact= iTime(symbol,timeframe, i);
+
+            if(Asc)
+               dayPrice=GetMinPrice(symbol,timeframe, i);
+            else
+               dayPrice=GetMaxPrice(symbol,timeframe, i);
+           }
+         else
+           {
+            if(Asc)
+              {
+               if(dayPrice>iLow(symbol,timeframe, i))
+                 {
+                  dayPrice=iLow(symbol,timeframe, i);
+                  dayZigzag0TimeExact= iTime(symbol,timeframe, i);
+                 }
+              }
+            else
+              {
+               if(dayPrice<iHigh(symbol,timeframe, i))
+                 {
+                  dayPrice=iHigh(symbol,timeframe, i);
+                  dayZigzag0TimeExact= iTime(symbol,timeframe, i);
+                 }
+              }
+
+           }
+
+        }
+      i++;
+     }
+   dayZigzag0Time=dayZigzag0TimeExact;
+   result.SL=dayPrice;
+   result.TP=CreateFiboTP(GetAveragePrice(symbol,PERIOD__D1(), dayZigzag0), GetAveragePrice(symbol,PERIOD__D1(),dayZigzag1),Asc);
+
+   for(int i=0; i< ArraySize(lstZZ); i++)
+     {
+      datetime h1Time = iTime(symbol,timeframe,lstZZ[ i ]);
+      if
+      (
+         h1Time<dayZigzag0Time
+      )
+        {
+         if(i==0)
+            continue;
+
+         if(i>MaxWaveCountForBreakRedPoint)
+            result.NotFound=true;
+
+         result.Date=h1Time;
+         if(Asc)
+           {
+            if(timeframe==PERIOD__H1())
+              {
+               //Print(h1Time + "   "+dayZigzag0Time);
+               //Print(lstZZ[i] + "    asc   " + i + "       " + iHigh(symbol,timeframe,lstZZ[ i]) + "       day0ZZ:" + dayZigzag0Time+ "   red:"+result.Date + "   timeframe:"+timeframe);
+              }
+            result.Price=GetMaxPrice(symbol,timeframe,lstZZ[ i]);
+            return result;
+           }
+         else
+           {
+            //if(GetAveragePrice(symbol,timeframe,lstZZ[ i ]) > GetAveragePrice(symbol,timeframe,lstZZ[ i +1]))
+            // continue;
+
+            if(timeframe==PERIOD__H1())
+              {
+               //Print(h1Time + "   "+dayZigzag0Time);
+               //Print(lstZZ[i] + "     desc  " + i + "       " + iLow(symbol,timeframe,lstZZ[ i]) + "       day0ZZ:" + dayZigzag0Time + "   red:"+result.Date + "   timeframe:"+timeframe);
+              }
+            result.Price= GetMinPrice(symbol,timeframe,lstZZ[ i]);
+            return result;
+           }
+        }
+     }
+   result.NotFound=true;
+   return result;
+
+   bool flag=false;
+   int i=0;
+
+   datetime dayZigzag0Time = iTime(symbol,PERIOD__D1(),dayZigzag0);
+   for(int i=0; i< ArraySize(lstH1ZZ); i++)
+   {
+    datetime h1Time = iTime(symbol,timeframe,lstH1ZZ[ i ]);
+    if
+    (
+       h1Time<dayZigzag0Time
+    )
+      {
+       //Print(  "h1Time " + h1Time+" dayZigzag0Time " +dayZigzag0Time );
+       if(Asc)
+         {
+          return iHigh(symbol,timeframe,lstH1ZZ[ i]);
+         }
+       else
+         {
+          return iLow(symbol,timeframe,lstH1ZZ[ i]);
+         }
+      }
+   }
+   return -1;
+
+  }
+bool EslaheDarsad(double correctionPercentMin, double tallPrice1, double tallPrice2, double shortPrice1, double shortPrice2, ENUM_TIMEFRAMES timeframe)
+  {
+
+   double tallDiff=  MathAbs(tallPrice1-tallPrice2);
+   double shortDiff= MathAbs(shortPrice1-shortPrice2);
+
+   if(shortDiff > tallDiff * correctionPercentMin/100)
+      return true;
+   else
+      return false;
+  }
+
+int FindSymbols(string & lstSymbol[])
+  {
+   bool   onlyInMarketWatch=true;
+   int    size = SymbolsTotal(onlyInMarketWatch);
+   ArrayResize(lstSymbol,size);
+   for(int i=0; i<size; i++)
+      lstSymbol[i] = SymbolName(i,onlyInMarketWatch);
+   return size;
+
+  }
+
+double GetMaxPriceBefore(string symbol,ENUM_TIMEFRAMES timeframe,int & list[], int shift)
+  {
+
+   int i=shift+1;
+   while(GetMaxPrice(symbol, timeframe, list[shift]) <= GetMaxPrice(symbol, timeframe, list[i]) && list[shift]!=empty)
+     {
+      i++;
+     }
+
+   return GetMaxPrice(symbol, timeframe, list[i]);
+
+  }
+
+void DrawText(long chartID, string text,string symbol,ENUM_TIMEFRAMES timeframe, int clrColor, int shift,int fontSize, bool italic)
+  {
+   string font="Arial";
+   if(italic==true)
+      font="Arial Italic";
+
+   string strRand= IntegerToString(MathRand());
+   ObjectCreate(chartID,strRand,OBJ_TEXT,0,iTime(symbol,timeframe,shift), iLow(symbol,timeframe,shift));
+   ObjectSetString(chartID,strRand,OBJPROP_TEXT,text);
+   ObjectSetString(chartID,strRand,OBJPROP_FONT,font);
+   ObjectSetInteger(chartID,strRand,OBJPROP_FONTSIZE,fontSize);
+   ObjectSetInteger(chartID,strRand,OBJPROP_COLOR,clrColor);
+   Sleep(100);
+   ChartRedraw(chartID);
+  }
+void DrawText123(long chartID, int & lstZZ[],string symbol,ENUM_TIMEFRAMES timeframe, int clrColor, int fontSize, int pivotCount, bool italic,int shift)
+  {
+   if(DrawTextCnt>122)
+      DrawTextCnt=97;
+   int to=pivotCount+shift;
+   if(to>ArraySize(lstZZ))
+      to=ArraySize(lstZZ);
+
+   for(int i=0+shift; i<to; i++)
+     {
+
+      string text="";
+      if(i==pivotCount-1+shift)
+         text="1"+CharToString(DrawTextCnt);
+      else
+        {
+         if((i+shift)%2==0)
+            text="3"+CharToString(DrawTextCnt);
+         else
+            text="2"+CharToString(DrawTextCnt);
+        }
+
+      DrawText(chartID, text,symbol,timeframe, clrColor, lstZZ[i],fontSize,italic);
+
+     }
+
+   DrawTextCnt++;
+  }
+void CreateObject(long chartID,string symbol, ENUM_TIMEFRAMES timeframe, ENUM_OBJECT objStyle, int objColor)
+  {
+   string strRand= IntegerToString(MathRand());
+   ObjectCreate(chartID,strRand,objStyle,0,TimeCurrent(),iLow(symbol,timeframe,0));
+   ObjectSetInteger(chartID,strRand,OBJPROP_WIDTH,5);
+   ObjectSetInteger(chartID,strRand,OBJPROP_COLOR,objColor);
+   Sleep(100);
+   ChartRedraw(chartID);
+  }
+string SerializeList(int & list[], int count=NULL, int shift=0)
+  {
+   string s="";
+   if(count==NULL)
+      count=ArraySize(list);
+
+   int to=count+shift;
+
+   if(to>ArraySize(list))
+      to=ArraySize(list);
+
+   for(int i=shift; i<to; i++)
+     {
+      s=s + (list[i])+",";
+     }
+   return s;
+  }
+double GetAveragePrice(string symbol,ENUM_TIMEFRAMES timeframe, int shift)
+  {
+
+   return
+      (iClose(symbol,timeframe,shift) + iOpen(symbol,timeframe,shift))/2 ;
+
+  }
+void Trade(ENUM_ST_TYPE St_Type, ProcessResult & dayResult, ProcessResult & hourResult,RedPointResult & redPoint,string symbol)
+  {
+   if(hourResult.result==0)
+      if(St_Type==ST_AGGRESSIVE || St_Type==ST_123)
+         return;
+
+   if(ExistTrade(St_Type,dayResult,   hourResult, redPoint, symbol)==false)
+     {
+      AddTrade(St_Type, dayResult,   hourResult, redPoint, symbol);
+      DoTrade();
+
+      long chartID= 0;
+      if(IsTesting()==true)
+        {
+         chartID=ChartID();
+        }
+      else
+        {
+         chartID= ChartOpen(symbol, PERIOD__D1());
+         //ChartApplyTemplate(chartID,"robot2.tpl");
+        }
+
+      Sleep(100);
+
+      if(St_Type==ST_AGGRESSIVE || St_Type==ST_123)
+        {
+         if(hourResult.result==1)
+           {
+            //Alert(symbol+ " Asc "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(), OBJ_ARROW_UP, clrCyan);
+            PrintAndAlert(symbol + " " +"Buy 123 RedPoint=" +redPoint.Price+" "+redPoint.Date  + " " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift) + "  Hour=" + SerializeList(hourResult.lstZZ,15)+ "    zzDepth for redPint:"+dayResult.zzDayDepth+" DayShift="+dayResult.shift);
+            AddToTextFileList(symbol + "  "+"buy"+ "  "+"123");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrDarkGray, dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+         if(hourResult.result==2)
+           {
+            //Alert(symbol+ " Asc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_UP, clrOrange);
+            PrintAndAlert(symbol + " " +"Buy Agg RedPoint=" +redPoint.Price + " "+redPoint.Date  + " " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift) + "  Hour=" + SerializeList(hourResult.lstZZ,15)+ "    zzDepth for redPint:"+dayResult.zzDayDepth+" DayShift="+dayResult.shift);
+            AddToTextFileList(symbol + "  "+"buy"+ "  "+"agg");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrDarkGray, dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+         if(hourResult.result==-1)
+           {
+            //Alert(symbol+ " Desc "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_DOWN, clrCyan);
+            PrintAndAlert(symbol + " " +"Sell 123 RedPoint=" +redPoint.Price + " "+redPoint.Date  + " " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift) + "  Hour=" + SerializeList(hourResult.lstZZ,15)+ "    zzDepth for redPint:"+dayResult.zzDayDepth+" DayShift="+dayResult.shift);
+            AddToTextFileList(symbol + "  "+"sell"+ "  "+"123");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrOrange,dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+         if(hourResult.result==-2)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_DOWN, clrOrange);
+            PrintAndAlert(symbol + " " +"Sell Agg RedPoint=" +redPoint.Price + " "+redPoint.Date  + " " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift) + "  Hour=" + SerializeList(hourResult.lstZZ,15)+ "    zzDepth for redPint:"+dayResult.zzDayDepth+" DayShift="+dayResult.shift);
+            AddToTextFileList(symbol + "  "+"sell"+ "  "+"agg");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrOrange,dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+        }
+      if(St_Type==ST_HAMMER)
+        {
+         if(dayResult.result>0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_UP, clrViolet);
+            PrintAndAlert(symbol + " " +"Buy Hammer : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+            AddToTextFileList(symbol + "  "+"buy"+ "  "+"hammer");
+
+            //if(SelectedSymbol!="")
+            //DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrViolet, dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+         if(dayResult.result<0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_DOWN, clrViolet);
+            PrintAndAlert(symbol + " " +"Sell Hammer : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+            AddToTextFileList(symbol + "  "+"sell"+ "  "+"hammer");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrViolet,dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+        }
+      if(St_Type==ST_123IchiTenKij)
+        {
+         if(dayResult.result>0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_UP, clrGreenYellow);
+            PrintAndAlert(symbol + " " +"Buy 123IchiTenKij : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+            AddToTextFileList(symbol + "  "+"buy"+ "  "+"ma");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrGreenYellow, dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+         if(dayResult.result<0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_DOWN, clrGreenYellow);
+            PrintAndAlert(symbol + " " +"Sell 123IchiTenKij : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+            AddToTextFileList(symbol + "  "+"sell"+ "  "+"ma");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrGreenYellow,dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+        }
+      if(St_Type==ST_MA200)
+        {
+         if(dayResult.result>0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_UP, clrBlue);
+            PrintAndAlert(symbol + " " +"Buy MA200 : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+            AddToTextFileList(symbol + "  "+"buy"+ "  "+"ma");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrBlue, dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+         if(dayResult.result<0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_DOWN, clrBlue);
+            PrintAndAlert(symbol + " " +"Sell MA200 : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+            AddToTextFileList(symbol + "  "+"sell"+ "  "+"ma");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrBlue,dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+        }
+      if(St_Type==ST_INSIDE)
+        {
+         if(dayResult.result>0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_UP, clrYellow);
+            PrintAndAlert(symbol + " " +"Buy Inside : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+            AddToTextFileList(symbol + "  "+"buy"+ "  "+"inside");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrYellow, dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+         if(dayResult.result<0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_DOWN, clrYellow);
+            PrintAndAlert(symbol + " " +"Sell Inside : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,dayResult.pivotCount,dayResult.shift)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+            AddToTextFileList(symbol + "  "+"sell"+ "  "+"inside");
+
+            //if(SelectedSymbol!="")
+            DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrYellow,dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+        }
+      if(St_Type==ST_P2)
+        {
+         if(dayResult.result>0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_UP, clrBrown);
+            PrintAndAlert(symbol + " " +"Buy P2 : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,10)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+
+            //if(SelectedSymbol!="")
+            //DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrBrown, dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+         if(dayResult.result<0)
+           {
+            //Alert(symbol+ " Desc(Aggressive) "+ SerializeList(dayResult.lstZZ));
+            CreateObject(chartID,symbol,PERIOD__D1(),OBJ_ARROW_DOWN, clrBrown);
+            PrintAndAlert(symbol + " " +"Sell P2 : " + " Signal Price=" + iClose(symbol,PERIOD__H1(),0) +  " Day="+   SerializeList(dayResult.lstZZ,10)+" DayShift="+dayResult.shift+ " zzDepth="+dayResult.zzDayDepth);
+
+            //if(SelectedSymbol!="")
+            //DrawText123(chartID,dayResult.lstZZ,symbol,PERIOD__D1(),clrBrown,dayResult.zzDayDepth,dayResult.pivotCount,false,dayResult.shift);
+           }
+        }
+      Sleep(100);
+     }
+  }
+bool ExistTrade(ENUM_ST_TYPE St_Type,ProcessResult & dayResult, ProcessResult & hourResult,RedPointResult & redPoint,string symbol)
+  {
+
+//Print("ArraySize(lstForTrade) : "+ArraySize(lstForTrade));
+
+   for(int i=0; i< lstForTradeCount; i++)
+     {
+      //Print(lstForTrade[i].hash);
+      if
+      (
+         (
+            (
+               lstForTrade[i].result ==hourResult.result
+               &&
+               (
+                  St_Type==ST_AGGRESSIVE
+                  ||
+                  St_Type==ST_123
+               )
+            )
+            ||
+            (
+               St_Type==ST_HAMMER
+               ||
+               St_Type==ST_MA200
+               ||
+               St_Type== ST_INSIDE
+               ||
+               St_Type== ST_P2
+               ||
+               St_Type== ST_123IchiTenKij
+            )
+         )
+
+         &&
+         lstForTrade[i].symbol ==symbol
+         &&
+         lstForTrade[i].hash == CreateHashCodeFromDayZZ(St_Type, dayResult.lstZZ,symbol,dayResult.shift,dayResult.pivotCount,dayResult)
+         &&
+
+         lstForTrade[i].St_Type==St_Type
+         /*
+         (
+            (
+               JustForShow==true
+            )
+            ||
+            (
+               JustForShow==false
+               &&
+               lstForTrade[i].JustForShow==JustForShow
+            )
+         )
+         */
+         //&&
+         //Bars(symbol, PERIOD__H1(), lstForTrade[i].LastUpdate, TimeCurrent()) < 30
+      )
+        {
+         //if(UpdateLastUpdate)
+         // lstForTrade[i].LastUpdate=TimeCurrent();
+
+         return true;
+        }
+
+     }
+//Print(CreateHashCodeFromDayZZ(dayResult.lstZZ,symbol));
+  return false;
+  }
+void AddTrade(ENUM_ST_TYPE St_Type, ProcessResult & dayResult, ProcessResult & hourResult,RedPointResult & redPoint,string symbol)
+  {
+
+//if(hourResult.result ==0)
+// return;
+   ForTrade item;
+   item.Price = (ask()+bid())/2;
+   item.Date=TimeCurrent();
+   item.RedPointPrice=redPoint.Price;
+   item.symbol=symbol;
+   item.result=hourResult.result;
+//item.LastUpdate=TimeCurrent();
+   item.TradeDate=NULL;
+   item.SL=0; //dayResult.lstZZ[0];
+   item.TP=0; //dayResult.lstZZ[1];
+
+   item.hash=CreateHashCodeFromDayZZ(St_Type, dayResult.lstZZ,symbol,dayResult.shift,dayResult.pivotCount,dayResult);
+
+   item.St_Type=St_Type;
+
+   lstForTrade[lstForTradeCount]= item;
+
+   lstForTradeCount++;
+
+//Print("lstForTradeCount : "+lstForTradeCount);
+  }
+void DoTrade()
+  {
+   for(int i=0; i<lstForTradeCount; i++)
+     {
+      if(TimeYear(lstForTrade[i].TradeDate) != 1970)
+         continue;
+      if(lstForTrade[i].Price = 0)
+         return;
+      //if(Bars(lstForTrade[i].symbol, PERIOD__H1(), lstForTrade[i].Date, TimeCurrent()) > 50)
+      //   continue;
+
+      /*
+            if
+            (
+               (
+                  CheckRedpointBeforeOrder
+                  &&
+                  (lstForTrade[i].St_Type==ST_AGGRESSIVE || lstForTrade[i].St_Type==ST_123)
+                  &&
+                  lstForTrade[i].result>0
+                  &&
+                  iClose(lstForTrade[i].symbol,PERIOD__H1(),0) > lstForTrade[i].RedPointPrice
+                  &&
+                  iOpen(lstForTrade[i].symbol,PERIOD__H1(),0) > lstForTrade[i].RedPointPrice
+                  &&
+                  iClose(lstForTrade[i].symbol,PERIOD__H1(),1) > lstForTrade[i].RedPointPrice
+                  &&
+                  iOpen(lstForTrade[i].symbol,PERIOD__H1(),1) > lstForTrade[i].RedPointPrice
+               )
+               ||
+               CheckRedpointBeforeOrder==false
+            )
+              {
+               if(order && lstForTrade[i].result==1)
+                  int orderResult=OrderSend(lstForTrade[i].symbol,OP_BUY,VolumeSize, ask(),   3,ND(lstForTrade[i].SL-(lstForTrade[i].SL*SLMultiple/100)),ND(lstForTrade[i].TP));
+
+               //Print("SL="+ lstForTrade[i].SL+ "     SL(Multiple)="+ND(lstForTrade[i].SL-(lstForTrade[i].SL*SLMultiple/100))+ "     TP="+ND(lstForTrade[i].TP));
+
+               lstForTrade[i].TradeDate=TimeCurrent();
+              }
+            if
+            (
+               (
+                  CheckRedpointBeforeOrder
+                  &&
+                  lstForTrade[i].result<0
+                  &&
+                  iClose(lstForTrade[i].symbol,PERIOD__H1(),0) < lstForTrade[i].RedPointPrice
+                  &&
+                  iOpen(lstForTrade[i].symbol,PERIOD__H1(),0) < lstForTrade[i].RedPointPrice
+                  &&
+                  iClose(lstForTrade[i].symbol,PERIOD__H1(),1) < lstForTrade[i].RedPointPrice
+                  &&
+                  iOpen(lstForTrade[i].symbol,PERIOD__H1(),1) < lstForTrade[i].RedPointPrice
+               )
+               ||
+               CheckRedpointBeforeOrder==false
+            )
+              {
+               if(order && lstForTrade[i].result==-1)
+                  int orderResult=OrderSend(lstForTrade[i].symbol,OP_SELL,VolumeSize, bid(),   3,ND(lstForTrade[i].SL+(lstForTrade[i].SL*SLMultiple/100)),ND(lstForTrade[i].TP));
+
+               //Print("SL="+ lstForTrade[i].SL+ "     SL(Multiple)="+ND(lstForTrade[i].SL+(lstForTrade[i].SL*SLMultiple/100))+ "     TP="+ND(lstForTrade[i].TP));
+
+               lstForTrade[i].TradeDate=TimeCurrent();
+              }
+      */
+
+     }
+  }
+
+double CreateFiboTP(double dayZZ0Price, double dayZZ1Price, bool isAsc)
+  {
+   double diff= MathAbs(dayZZ0Price-dayZZ1Price);
+   double result= diff*TpPercent/100 ;
+   if(isAsc)
+      result=MathMin(dayZZ0Price,dayZZ1Price)+result;
+   else
+      result=MathMin(dayZZ0Price,dayZZ1Price)-result;
+
+   return result;
+  }
+
+double ND(double val)
+  {
+   return(NormalizeDouble(val, _Digits));
+  }
+void New(ZZList &  zz[],int zzDepth1, int zzDepth2, ZZList & lstZZResult[],ENUM_TIMEFRAMES timeframe,string symbol, int & lstBiggerList[])
+  {
+   string strList[2][1000];
+   int loop=0;
+   if(zzDepth2==7) // چون برای هفت حالت دیگری هم برای زیگزاگ در نظر میگیریم
+      loop=1;
+   int lst1[];
+   int lst2[];
+   FindZZByDepth(zz, zzDepth1,lst1);
+   ArrayCopy(lstBiggerList,lst1);
+
+   for(int x=0; x<=loop; x++)
+     {
+      if(loop==0)
+         FindZZByDepth(zz, zzDepth2,lst2);
+      else
+         FindZZByDepth(zz, zzDepth2,lst2,1,6,timeframe,symbol);
+
+      int list1Deep= MathMin(ArraySize(lst1), 12) ;
+      int list2Deep=MathMin(ArraySize(lst2),16);
+      int lstTemp[];
+      strList[x][0]=  CreateNewList(lst1,ArraySize(lst1)-1,ArraySize(lst1), lstTemp);
+      strList[x][1]=  CreateNewList(lst2,ArraySize(lst2)-1,ArraySize(lst2), lstTemp);
+      int cnt=2;
+
+      for(int i=0; i<list1Deep; i++) //ArraySize(lst1)
+        {
+         if(lst1[i]==-1)
+            break;
+
+         for(int j=i+1; j<list2Deep; j++)  //ArraySize(lst1)
+           {
+            if(lst1[j]==-1)
+               break;
+
+            int lstNum[];
+            int lstResult[];
+            GetNumberBetween(lst2, lst1[i],lst1[j],lstNum,list1Deep,list2Deep);
+            //if(ArraySize(lstNum)>2)
+              {
+               strList[x][cnt]=  CreateNewList(lst1,i,j, lstNum);
+               cnt++;
+              }
+           }
+        }
+
+      for(int i=0; i< 1000 ; i++)
+        {
+         if(strList[x][i]==NULL)
+            break;
+         strList[x][i]=ChangeListLen(strList[x][i],list2Deep);
+        }
+     }
+   string strList3[2000];
+   int iii=0;
+   for(iii=0; iii<1000; iii++)
+     {
+      strList3[iii]=strList[0][iii];
+     }
+   for(int jjj=0; jjj<1000; jjj++)
+     {
+      strList3[iii+jjj]=strList[1][jjj];
+     }
+
+   string strList2[];
+   DeleteReplicated(strList3,strList2);
+   ConvertStrToList(strList2,lstZZResult);
+
+   for(int i=0; i<ArraySize(lstZZResult); i++)
+     {
+      if(lstZZResult[i].list[0]==-1)
+        {
+         //Print(i);
+         break;
+        }
+
+      lstZZResult[i].zz[0]=zzDepth1;
+      lstZZResult[i].zz[1]=zzDepth2;
+
+      //Print(SerializeList(lstZZResult[i].list));
+     }
+
+  }
+
+void GetNumberBetween(int & lst[],int item1,int item2, int & lstNum[],int list1Deep, int list2Deep)
+  {
+
+   int cnt=0;
+   ArrayResize(lstNum,200);
+   PrepareList(lstNum);
+
+   for(int i=0; i< list1Deep ; i++)  //ArraySize(lst)
+     {
+      if(lst[i]==-1)
+         break;
+      if(lst[i]==item1)
+        {
+         for(int j=i+1; j< list2Deep ; j++)  //ArraySize(lst)
+           {
+            if(lst[j]==-1)
+               break;
+
+            if(lst[j]==item2)
+               return;
+
+            lstNum[cnt]=lst[j];
+            cnt++;
+           }
+        }
+     }
+  }
+
+string CreateNewList(int & lst1[],int ii,int jj,int & lstNum[])
+  {
+   string s="";
+   for(int i=0; i<=ii; i++)
+     {
+      s=s+lst1[i]+",";
+     }
+
+   for(int j=0; j<ArraySize(lstNum); j++)
+     {
+      if(lstNum[j]!=-1)
+         s=s+lstNum[j]+",";
+     }
+
+   for(int i=jj; i<ArraySize(lst1); i++)
+     {
+      s=s+lst1[i]+",";
+     }
+
+   return s;
+
+  }
+void ConvertStrToList(string & strList[], ZZList & zzListResult[])
+  {
+   int cnt=0;
+   while(strList[cnt]!=NULL)
+     {
+
+      string lstTemp[];
+      StringSplit(strList[cnt],StringGetCharacter(",",0), lstTemp);
+
+      for(int x=0; x< ArraySize(lstTemp) ; x++)  //ArraySize(lstTemp)
+        {
+         if(lstTemp[x]!="-1" && lstTemp[x]!="")
+            zzListResult[cnt].list[x]= StringToInteger(lstTemp[x]);
+        }
+
+
+      cnt++;
+     }
+
+  }
+void DeleteReplicated(string & strList[], string & strList2[])
+  {
+   ArrayResize(strList2,1000);
+   int cnt=0;
+
+   for(int i=0; i< ArraySize(strList) ; i++)
+     {
+      if(strList[i]==NULL)
+         return;
+      bool replicated=false;
+      for(int j=0; j<cnt; j++)
+        {
+
+         if(strList2[j]==strList[i])
+           {
+            replicated=true;
+            break;
+           }
+        }
+
+      if(replicated==false)
+        {
+         strList2[cnt]=strList[i];
+         //Alert(strList2[cnt]);
+         cnt++;
+        }
+     }
+  }
+
+void PreparelstDayCombineZZ()
+  {
+   ArrayResize(lstDayCombineZZ,CombineZZCount);
+// 04-09-2011 AUDCHF
+   lstDayCombineZZ[0].zz1=24; // 03-03-2021 AAPL
+   lstDayCombineZZ[0].zz2=7;
+
+   lstDayCombineZZ[1].zz2=12;
+   lstDayCombineZZ[1].zz2=7;
+
+//lstDayCombineZZ[1].zz1=10;
+//lstDayCombineZZ[1].zz2=7;
+  }
+void FindZZByDepth(ZZList &  zz[], int zzDepth,int & lst[], int a=0, int b=0, ENUM_TIMEFRAMES timeframe=0,string symbol="")
+  {
+   if(a!=0 && b!=0)
+     {
+      ExportZZ(lst,symbol,timeframe, zzDepth, maxDepth,a,  b);
+     }
+
+   else
+     {
+
+      for(int i=0; i<ArraySize(zz); i++)
+        {
+         if(zz[i].zz[0]==zzDepth)
+           {
+            ArrayCopy(lst,zz[i].list);
+            return;
+           }
+        }
+
+     }
+  }
+int GetMinZZ(int zzDepth1, int zzDepth2)
+  {
+   if(zzDepth1==0)
+      return zzDepth2;
+
+   if(zzDepth2==0)
+      return zzDepth1;
+
+   return MathMin(zzDepth1,zzDepth2);
+  }
+int GetMaxZZ(int zzDepth1, int zzDepth2)
+  {
+   if(zzDepth1==0)
+      return zzDepth2;
+
+   if(zzDepth2==0)
+      return zzDepth1;
+
+   return MathMax(zzDepth1,zzDepth2);
+  }
+bool ExistBigCandleBetween(int pivot4, int pivot5,string symbol, ENUM_TIMEFRAMES timeframe, int pivot2, bool asc)
+  {
+   if(asc==true)
+     {
+      double price1=iHighest(symbol,timeframe,MODE_CLOSE, pivot5-pivot4,pivot4);
+      double price2=iHighest(symbol,timeframe,MODE_OPEN, pivot5-pivot4,pivot4);
+      price1= MathMax(GetMaxPrice(symbol,timeframe,price1),  GetMaxPrice(symbol,timeframe,price2));
+      //Print("ExistBigCandleBetween : " + price1);
+      if
+      (
+         price1 > GetMaxPrice(symbol,timeframe,pivot4)
+         &&
+         price1 > GetMaxPrice(symbol,timeframe,pivot2)
+      )
+        {
+         //Print("ExistBigCandleBetween : " + price1);
+         return true;
+        }
+     }
+   else
+     {
+      double price1=iLowest(symbol,timeframe,MODE_CLOSE, pivot5-pivot4,pivot4);
+      double price2=iLowest(symbol,timeframe,MODE_OPEN, pivot5-pivot4,pivot4);
+      price1= MathMin(GetMinPrice(symbol,timeframe,price1),  GetMinPrice(symbol,timeframe,price2));
+      //Print("ExistBigCandleBetween : " + price1);
+      if
+      (
+         price1 < GetMinPrice(symbol,timeframe,pivot4)
+         &&
+         price1 < GetMinPrice(symbol,timeframe,pivot2)
+      )
+        {
+         //Print("ExistBigCandleBetween : " + price1);
+         return true;
+        }
+     }
+
+   return false;
+
+  }
+string CreateHashCodeFromDayZZ(ENUM_ST_TYPE St_Type,int & lstDayZZ[], string symbol, int shift, int pivotCount,ProcessResult & dayResult)
+  {
+   string s="";
+
+   if
+   (
+      St_Type== ST_INSIDE
+      ||
+      St_Type== ST_MA200
+      ||
+      St_Type== ST_HAMMER
+   )
+     {
+      s= TimeYear(TimeCurrent())+" "+ TimeMonth(TimeCurrent())+" "+TimeDay(TimeCurrent());
+      return s;
+     }
+   else
+     {
+      int to=pivotCount+shift;
+
+      if(to>ArraySize(lstDayZZ))
+         to=ArraySize(lstDayZZ);
+
+      for(int i=1+shift; i<to; i++)
+        {
+         datetime date=  iTime(symbol,PERIOD__D1(),lstDayZZ[i]);
+         s=s+ TimeToString(date,TIME_DATE)+" ";
+        }
+
+      //Print(s + " ____________ " + pivotCount);
+
+      return s;
+
+     }
+  }
+string ChangeListLen(string str,int list2Deep)
+  {
+   string result="";
+   int cnt=0;
+   for(int i=0; i<StringLen(str); i++)
+     {
+      if(cnt>=list2Deep)
+         return result;
+
+      if(str[i]==',')
+         cnt++;
+
+      result=result+ CharToString(str[i]);
+     }
+
+   return result;
+
+  }
+bool ExistBiggerThan(int LastThreePos, int PreviousThreePos,string symbol,ENUM_TIMEFRAMES timeframe)
+  {
+   double high= MathMax(iHigh(symbol,timeframe,PreviousThreePos),iHigh(symbol,timeframe,LastThreePos));
+   for(int i= MathMin(PreviousThreePos, LastThreePos); i< MathMax(PreviousThreePos, LastThreePos)  ; i++)
+     {
+      if
+      (
+         iHigh(symbol,timeframe,i) > high
+      )
+         return true;
+
+     }
+   return false;
+  }
+bool ExistSmallerThan(int LastTwoPos, int PreviousTwoPos,string symbol,ENUM_TIMEFRAMES timeframe)
+  {
+   double low= MathMin(iLow(symbol,timeframe,PreviousTwoPos), iLow(symbol,timeframe,LastTwoPos));
+   for(int i=MathMin(PreviousTwoPos, LastTwoPos) ; i<MathMax(PreviousTwoPos, LastTwoPos); i++)
+     {
+      if
+      (
+         iLow(symbol,timeframe,i) < low
+      )
+         return true;
+
+     }
+   return false;
+  }
+int IsHammer(string symbol, ENUM_TIMEFRAMES timeframe,int lastZZ0=0,int lastZZ1=0)
+  {
+   double open=iOpen(symbol,timeframe,1);
+   double close=iClose(symbol,timeframe,1);
+   double low=iLow(symbol,timeframe,1);
+   double high=iHigh(symbol,timeframe,1);
+
+// if(lastZZ>5)
+//    return 0;
+
+   if(open>close)
+     {
+      //desc:
+      if(open <=  high- (((high-low)/3)*2))
+         if
+         (
+            lastZZ0<=1
+            &&
+            high <  iHigh(symbol,timeframe,lastZZ1)
+
+            &&
+            iHigh(symbol,timeframe,2) < high
+            &&
+            iHigh(symbol,timeframe,3) < high
+
+            // && iClose(symbol,timeframe,0)<iOpen(symbol,timeframe,0) )
+         )
+            return -1;
+     }
+   else
+      if(open<close)
+        {
+         //asc:
+         //Print(low+ (((high-low)/3)*2));
+         if(open >=  low+ (((high-low)/3)*2))
+            if
+            (
+               lastZZ0<=1
+               &&
+               low <  iLow(symbol,timeframe,lastZZ1)
+
+               &&
+               iLow(symbol,timeframe,2) > low
+               &&
+               iLow(symbol,timeframe,3) > low
+
+               //&& iClose(symbol,timeframe,0)>iOpen(symbol,timeframe,0) )
+            )
+               return 1;
+        }
+
+
+   return 0;
+  }
+int Is123IchiTenKij(string symbol, ENUM_TIMEFRAMES timeframe, bool asc)
+  {
+
+   double kij[2], ten[2],  senA[2], senB[2];
+   bool res0= GetIchi(symbol, PreviousTimeFrame(_Period,1),  0, kij[0], ten[0],  senA[0], senB[0]);
+   bool res1= GetIchi(symbol, PreviousTimeFrame(_Period,1),  1, kij[1], ten[1],  senA[1], senB[1]);
+
+   if
+   (
+      asc
+      && ((ten[0] > kij[0]) || (ten[0]==kij[0] && ten[0]>ten[1] && kij[0]>kij[1]))
+   )
+      return 1;
+
+   if
+   (
+      !asc
+      && ((ten[0] < kij[0]) || (ten[0]==kij[0] && ten[0]<ten[1] && kij[0]<kij[1]))
+   )
+      return -1;
+
+   return 0;
+  }
+int IsMA200(string symbol, ENUM_TIMEFRAMES timeframe,int & lstZZ[], bool asc)
+  {
+//if(lastZZ>5)
+// return 0;
+
+   bool isOverMA200=false;
+   for(int i=0; i<lstZZ[1]; i++)
+     {
+      double ma200[2]= {0,0};
+
+#ifdef __MQL4__
+      ma200[0]=iMA(symbol,timeframe,200,0,MODE_SMA,PRICE_CLOSE,1);
+      ma200[1]=iMA(symbol,timeframe,200,0,MODE_EMA,PRICE_CLOSE,1);
+#endif
+#ifdef __MQL5__
+      ma200[0]=iMA(symbol,timeframe,200,0,MODE_SMA,PRICE_CLOSE);
+      ma200[1]=iMA(symbol,timeframe,200,0,MODE_EMA,PRICE_CLOSE);
+#endif
+
+      if(asc)
+        {
+         if(iHigh(symbol,timeframe,0) >MathMax(ma200[0], ma200[1]))
+           {
+            isOverMA200=true;
+           }
+
+         if
+         (
+            isOverMA200==true
+            && iLow(symbol,timeframe,i) <MathMax(ma200[0], ma200[1])
+            && iLow(symbol,timeframe,lstZZ[1]) > MathMax(ma200[0], ma200[1])
+         )
+           {
+            return 1;
+           }
+        }
+
+      if(!asc)
+        {
+         if(iLow(symbol,timeframe,0) < MathMin(ma200[0], ma200[1]))
+           {
+            isOverMA200=true;
+           }
+
+         if
+         (
+            isOverMA200==true
+            && iHigh(symbol,timeframe,i) >MathMin(ma200[0], ma200[1])
+            && iHigh(symbol,timeframe,lstZZ[1]) < MathMin(ma200[0], ma200[1])
+         )
+           {
+            return -1;
+           }
+        }
+      /*
+      int a= CheckIsMA200(symbol,  timeframe, res1,lastZZ, asc);
+      if(a!=0)
+       return a;
+
+      int b= CheckIsMA200(symbol,  timeframe, res2,lastZZ, asc);
+      if(b!=0)
+       return b;
+       */
+     }
+   return 0;
+  }
+int CheckIsMA200(string symbol, ENUM_TIMEFRAMES timeframe, int MA, int lastZZ, bool asc)
+  {
+   if
+   (
+      asc
+      &&
+      iLow(symbol,timeframe,lastZZ) > MA
+      &&
+      iLow(symbol,timeframe,lastZZ) > iLow(symbol,timeframe,1)
+//&&
+//iLow(symbol,timeframe,5) > MA
+
+      &&
+      (
+         iLow(symbol,timeframe,1) < MA
+         ||
+         iLow(symbol,timeframe,1) - (MathAbs(iHigh(symbol,timeframe,1) - iLow(symbol,timeframe,1))/3) < MA
+      )
+   )
+      return 1;
+   if
+   (
+      asc==false
+      &&
+      iHigh(symbol,timeframe,lastZZ) < MA
+      &&
+      iHigh(symbol,timeframe,lastZZ) < iHigh(symbol,timeframe,1)
+//&&
+//iHigh(symbol,timeframe,5) < MA
+      &&
+      (
+         iHigh(symbol,timeframe,1) > MA
+         ||
+         iHigh(symbol,timeframe,1) + (MathAbs(iHigh(symbol,timeframe,1) - iLow(symbol,timeframe,1))/3) > MA
+      )
+   )
+      return -1;
+
+   return 0;
+
+  }
+void TestHammer()
+  {
+   int a=IsHammer("",PERIOD__D1());
+   if(a!=0)
+      Print(a);
+
+  }
+bool ExistTwoItemOfBiggerList(int & list[], int maxCount, int & lstBiggerList[])
+  {
+   int cnt=0;
+   for(int i=0; i<maxCount; i++)
+     {
+      if(ExistItemInArray(lstBiggerList,list[i]))
+         cnt++;
+     }
+
+   if(cnt>=2)
+      return true;
+   else
+      return false;
+  }
+bool ExistItemInArray(int & list[], int item)
+  {
+   for(int i=0; i<ArraySize(list); i++)
+     {
+      if(list[i]==-1)
+         return false;
+
+      if(list[i]==item)
+         return true;
+     }
+
+   return false;
+  }
+double bid()
+  {
+   MqlTick last_tick;
+   SymbolInfoTick(_Symbol,last_tick);
+   double bid=last_tick.bid;
+   return bid;
+  }
+double ask()
+  {
+   MqlTick last_tick;
+   SymbolInfoTick(_Symbol,last_tick);
+   double ask=last_tick.ask;
+   return ask;
+  }
+#ifdef __MQL5__
+int TimeYear(datetime date)
+  {
+   MqlDateTime tm;
+   TimeToStruct(date,tm);
+   return(tm.year);
+  }
+int TimeMonth(datetime date)
+  {
+   MqlDateTime tm;
+   TimeToStruct(date,tm);
+   return(tm.mon);
+  }
+int TimeDay(datetime date)
+  {
+   MqlDateTime tm;
+   TimeToStruct(date,tm);
+   return(tm.day);
+  }
+int TimeHour(datetime date)
+  {
+   MqlDateTime tm;
+   TimeToStruct(date,tm);
+   return(tm.hour);
+  }
+#endif
+void PrintAndAlert(string text)
+  {
+   Print(text);
+
+   if(AlertSignal)
+      Alert(text);
+  }
+void PrintAndComment(string text)
+  {
+   Print(text);
+   Comment(text);
+  }
+void PrintAndAlertAndComment(string text)
+  {
+   Print(text);
+   Comment(text);
+
+   if(AlertSignal)
+      Alert(text);
+  }
+void CloseAllCharts(long & lstNewChartID[])
+  {
+   long curChart,prevChart=ChartFirst();
+   int i=0,limit=1000;
+
+   while(i<limit)
+     {
+
+      curChart=ChartNext(prevChart);
+      if(curChart==-1)
+         break;
+
+      for(int i=0; i<ArraySize(lstNewChartID); i++)
+        {
+         if(lstNewChartID[i]==-1)
+            break;
+
+         if(curChart==lstNewChartID[i])
+            ChartClose(curChart);
+        }
+
+      prevChart=curChart;// let's save the current chart ID for the ChartNext()
+      i++;// Do not forget to increase the counter
+     }
+  }
+bool ExistInsideBefore(string symbol, ENUM_TIMEFRAMES timeframe,int shift,double & insideMinPrice,double & insideMaxPrice,int & insideFirstShift, int & insideLastShift)
+  {
+   insideMinPrice=0;
+   insideMaxPrice=0;
+
+   for(int i=shift; i<shift+40; i++)
+     {
+      if(i>=shift+10)
+        {
+
+         double bigCandleHigh=iHigh(symbol,timeframe, i);
+         double bigCandlelow=iLow(symbol,timeframe,i);
+
+         bool valid=true;
+         for(int j=shift; j<=i; j++)
+           {
+            if(GetMaxPrice(symbol,timeframe,j)> bigCandleHigh || GetMinPrice(symbol,timeframe,j)<bigCandlelow)
+              {
+               valid=false;
+               break;
+              }
+           }
+         if(valid==true)
+           {
+            insideMaxPrice=bigCandleHigh;
+            insideMinPrice=bigCandlelow;
+
+            insideFirstShift = iLowest(symbol, timeframe,    MODE_LOW, i-shift,shift);
+            insideLastShift= i ;
+
+            //PrintAndAlert(insideFirstShift + "    "+insideLastShift);
+            return true;
+           }
+
+        }
+     }
+
+   return false;
+  }
+void FindSmallerZZFromList(int  & lstZZdepth[], int  &  lstNewZZDepth[], int zzDayDepth)
+  {
+   int cnt=0;
+   ArrayResize(lstNewZZDepth,500);
+   PrepareList(lstNewZZDepth);
+
+   for(int i=0; i<ArraySize(lstZZdepth); i++)
+     {
+      if(lstZZdepth[i] <=  zzDayDepth)
+        {
+         lstNewZZDepth[cnt]=lstZZdepth[i];
+         cnt++;
+        }
+     }
+  }
+void GetListBeforeShift(int & lstZZ[], int & lstNew[],int shift)
+  {
+   ArrayResize(lstNew,500);
+   PrepareList(lstNew);
+
+   int cnt=0;
+
+   for(int i=0; i<ArraySize(lstZZ); i++)
+     {
+      if(lstZZ[i]>shift)
+        {
+         lstNew[cnt]=lstZZ[i];
+         cnt++;
+        }
+     }
+  }
+bool FindTrendBeforeMovement(string symbol,ENUM_TIMEFRAMES timeframe, int & lstZZ[],  bool isAsc, double & p2Redpoint,int zzDep, int & outShift)
+  {
+
+
+   if(isAsc==false)
+     {
+      if
+      ((
+          iLow(symbol,timeframe,lstZZ[0]) < iHigh(symbol,timeframe,lstZZ[1])
+          &&
+          iHigh(symbol,timeframe,lstZZ[1])>iLow(symbol,timeframe,lstZZ[2])
+          &&
+          iLow(symbol,timeframe,lstZZ[2]) < iHigh(symbol,timeframe,lstZZ[3])
+          &&
+          iHigh(symbol,timeframe,lstZZ[5]) < iHigh(symbol,timeframe,lstZZ[3])
+          &&
+          iHigh(symbol,timeframe,lstZZ[1])< iHigh(symbol,timeframe,lstZZ[3])
+       )==false)
+         return false;
+     }
+
+   if(isAsc==true)
+     {
+      if
+      ((
+          iHigh(symbol,timeframe,lstZZ[0]) > iLow(symbol,timeframe,lstZZ[1])
+          &&
+          iLow(symbol,timeframe,lstZZ[1])<iHigh(symbol,timeframe,lstZZ[2])
+          &&
+          iHigh(symbol,timeframe,lstZZ[2]) > iLow(symbol,timeframe,lstZZ[3])
+          &&
+          iLow(symbol,timeframe,lstZZ[5]) > iLow(symbol,timeframe,lstZZ[3])
+          &&
+          iLow(symbol,timeframe,lstZZ[1]) > iLow(symbol,timeframe,lstZZ[3])
+       )==false)
+         return false;
+     }
+   int p2=3;
+   p2Redpoint=0;
+
+   int max=2;
+   if(zzDep<=12)
+      max=4;
+
+   for(int i=1; i<max; i++)
+     {
+      if
+      (
+         iLow(symbol,timeframe, lstZZ[p2+i+0])< iHigh(symbol,timeframe,lstZZ[p2+i+1])
+         &&
+         iLow(symbol,timeframe,lstZZ[ p2+i+2])< iHigh(symbol,timeframe,lstZZ[p2+i+3])
+
+         &&
+         iHigh(symbol,timeframe, lstZZ[p2+i+3])> iHigh(symbol,timeframe,lstZZ[p2+i+1])
+         &&
+         iLow(symbol,timeframe, lstZZ[p2+i+2])> iLow(symbol,timeframe,lstZZ[p2+i+0])
+
+      )
+        {
+         if(isAsc==true)
+           {
+            p2Redpoint=iHigh(symbol,timeframe,lstZZ[ p2+i+1]);
+            outShift=i;
+            //Print(p2+i+1+"      "+p2Redpoint + "          " + SerializeList(lstZZ,10) + "  " +timeframe+ "    "+ i);
+            return true;
+           }
+         else
+           {
+            return false;
+           }
+        }
+
+      if
+      (
+         iHigh(symbol,timeframe,lstZZ[ p2+i+0])> iLow(symbol,timeframe,lstZZ[p2+i+1])
+         &&
+         iHigh(symbol,timeframe,lstZZ[ p2+i+2])> iLow(symbol,timeframe,lstZZ[p2+i+3])
+
+         &&
+         iLow(symbol,timeframe, lstZZ[p2+i+3])< iLow(symbol,timeframe,lstZZ[p2+i+1])
+         &&
+         iHigh(symbol,timeframe, lstZZ[p2+i+2])< iHigh(symbol,timeframe,lstZZ[p2+i+0])
+
+      )
+        {
+         if(isAsc==false)
+           {
+            p2Redpoint=iLow(symbol,timeframe,lstZZ [ p2+i+1]);
+            outShift=i;
+            //Print(p2+i+1+"      "+p2Redpoint + "          " + SerializeList(lstZZ,10) + "  " +timeframe+ "    "+ i);
+            return true;
+           }
+         else
+           {
+            return false;
+           }
+        }
+     }
+   return false;
+  }
+ENUM_TIMEFRAMES PERIOD__D1()
+  {
+// 1: D1-H1       2: H1-M10
+   if(timeType==1)
+      return PERIOD_D1;
+
+   if(timeType==2)
+      return PERIOD_H4;
+
+   if(timeType==3)
+      return PERIOD_H1;
+
+   if(timeType==4)
+      return PERIOD_M30;
+
+   if(timeType==5)
+      return PERIOD_M15;
+
+   if(timeType==0)
+      return _Period;
+
+   return NULL;
+  }
+ENUM_TIMEFRAMES PERIOD__H1()
+  {
+// 1: D1-H1       2: H1-M10
+   if(timeType==1)
+      return PERIOD_H1;
+
+   if(timeType==2)
+      return PERIOD_M30;
+
+   if(timeType==3)
+      return PERIOD_M15;
+
+   if(timeType==4)
+      return PERIOD_M5;
+
+   if(timeType==5)
+      return PERIOD_M1;
+
+   if(timeType==0)
+      return PreviousTimeFrame(_Period,2);
+
+   return NULL;
+  }
+ENUM_TIMEFRAMES PreviousTimeFrame(int timeFrame,int step) 
+  {
+   for(int i=0; i<9; i++)
+     {
+      if(timeFrame==timeFrames[ i])
+        {
+         return timeFrames[ i-step];
+        }
+     }
+   return 0;
+  }
+string WriteFile()
+  {
+   string s= TimeYear(TimeCurrent())+"-"+ TimeMonth(TimeCurrent())+"-"+TimeDay(TimeCurrent())+"-"+ MathRand()+".txt";
+   int h=FileOpen(s,FILE_WRITE|FILE_ANSI|FILE_TXT);
+   if(h==INVALID_HANDLE)
+     {
+      Alert("Error Writing file");
+      return "Error Writing file";
+     }
+   for(int i=0; i<lstTextFileCnt; i++)
+     {
+      FileWrite(h,lstTextFile[i]);
+     }
+   FileClose(h);
+   return s;
+  }
+void AddToTextFileList(string s)
+  {
+   for(int i=0; i<lstTextFileCnt; i++)
+     {
+      if(lstTextFile[i]==s)
+        {
+         return;
+        }
+     }
+   lstTextFile[lstTextFileCnt]=s;
+   lstTextFileCnt++;
+  }
+int GetCurrentTimerMinuteForLoop()
+  {
+   switch(_Period)
+     {
+      case  PERIOD_M15:
+         return TimerMinuteForLoopM15;
+      case PERIOD_M30 :
+         return TimerMinuteForLoopM30;
+      case PERIOD_H1:
+         return TimerMinuteForLoopH1;
+      case PERIOD_H4:
+         return TimerMinuteForLoopH4;
+      case PERIOD_D1:
+         return TimerMinuteForLoopD1;
+      default:
+         return 0;
+     }
+   return 0;
+  }
+bool GetIchi(string symbol, ENUM_TIMEFRAMES timeframe,int shift, double & kij, double & ten,double & senkaspanA,double & senkanspanB)
+  {
+   int bars=iBars(symbol,timeframe);
+   if(bars<70)
+      return false;
+#ifdef __MQL4__
+
+   ten= iIchimoku(symbol,timeframe,9,26,52,MODE_TENKANSEN,shift);
+   kij= iIchimoku(symbol,timeframe,9,26,52,MODE_KIJUNSEN,shift);
+   senkaspanA =iIchimoku(symbol,timeframe,9,26,52,MODE_SENKOUSPANA,shift);
+   senkanspanB=iIchimoku(symbol,timeframe,9,26,52,MODE_SENKOUSPANB,shift);
+   double chikou =iIchimoku(symbol,timeframe,9,26,52,MODE_CHIKOUSPAN,shift);
+#endif
+#ifdef __MQL5__
+
+   double         Tenkan_sen_Buffer[];
+   double         Kijun_sen_Buffer[];
+   double         Senkou_Span_A_Buffer[];
+   double         Senkou_Span_B_Buffer[];
+   double         Chinkou_Span_Buffer[];
+
+   int handle=iIchimoku(symbol,timeframe,9,26,52);
+   CopyBuffer(handle,0,shift,1,Tenkan_sen_Buffer);
+   CopyBuffer(handle,1,shift,1,Kijun_sen_Buffer);
+   /*
+   CopyBuffer(handle,2,-senkou_span_shift,amount,senkou_span_A_buffer);
+   CopyBuffer(handle,3,-senkou_span_shift,amount,senkou_span_B_buffer);
+   CopyBuffer(handle,4,0,amount,chinkou_span_buffer);
+   */
+
+   kij=Kijun_sen_Buffer[0];
+   ten=Tenkan_sen_Buffer[0];
+
+#endif
+
+   return true;
+  }
+//+------------------------------------------------------------------+
